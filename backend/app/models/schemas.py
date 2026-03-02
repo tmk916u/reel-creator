@@ -61,3 +61,27 @@ class JobResult(BaseModel):
     original_duration: float
     processed_duration: float
     silence_removed: float
+
+
+# --- SNS Publish ---
+
+class Platform(str, Enum):
+    INSTAGRAM = "instagram"
+    TIKTOK = "tiktok"
+
+
+class PublishRequest(BaseModel):
+    sheet_row: int
+    platforms: list[Platform]
+
+
+class PublishResult(BaseModel):
+    platform: str
+    success: bool
+    message: str
+    post_id: str | None = None
+
+
+class PublishResponse(BaseModel):
+    job_id: str
+    results: list[PublishResult]

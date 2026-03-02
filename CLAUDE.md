@@ -37,11 +37,16 @@ npm run build                  # ビルド
 - `frontend/components/` — UIコンポーネント群
 - `frontend/lib/api.ts` — バックエンドAPIクライアント
 - `backend/app/main.py` — FastAPIエントリポイント
-- `backend/app/routers/video.py` — 全APIエンドポイント
+- `backend/app/routers/video.py` — 動画処理APIエンドポイント
+- `backend/app/routers/publish.py` — SNS投稿APIエンドポイント
 - `backend/app/services/ffmpeg.py` — FFmpegラッパー
 - `backend/app/services/silence.py` — 無音削除ロジック
 - `backend/app/services/subtitle.py` — Whisper字幕生成
+- `backend/app/services/google_sheets.py` — Google Sheets連携
+- `backend/app/services/instagram.py` — Instagram Reels投稿
+- `backend/app/services/tiktok.py` — TikTok投稿
 - `backend/app/models/schemas.py` — Pydanticスキーマ
+- `backend/.env` — 環境変数（gitignored）
 
 ## Conventions
 - Backend: Python, snake_case, type hints

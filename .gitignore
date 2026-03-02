@@ -15,3 +15,11 @@ frontend/.next/
 # IDE
 .vscode/
 .idea/
+
+# Environment / Secrets
+backend/.env
+
+# Credentials
+credentials/
+**/credentials/
+**/service_account*.json

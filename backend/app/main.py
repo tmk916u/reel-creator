@@ -4,9 +4,12 @@ import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import video
+from app.routers import video, publish
 
 TMP_DIR = Path("/app/tmp")
 CLEANUP_INTERVAL = 300  # 5 minutes
@@ -43,6 +46,7 @@ app.add_middleware(
 )
 
 app.include_router(video.router)
+app.include_router(publish.router)
 
 
 @app.get("/api/health")

@@ -6,6 +6,7 @@ services:
     volumes:
       - ./backend:/app
       - backend-tmp:/app/tmp
+    env_file: ./backend/.env
     environment:
       - PYTHONUNBUFFERED=1
 
