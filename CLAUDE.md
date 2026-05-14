@@ -40,8 +40,11 @@ npm run build                  # ビルド
 - `backend/app/routers/video.py` — 動画処理APIエンドポイント
 - `backend/app/routers/publish.py` — SNS投稿APIエンドポイント
 - `backend/app/services/ffmpeg.py` — FFmpegラッパー
-- `backend/app/services/silence.py` — 無音削除ロジック
-- `backend/app/services/subtitle.py` — Whisper字幕生成
+- `backend/app/services/silence.py` — 無音削除ロジック（extra_cutsで追加削除区間もマージ可）
+- `backend/app/services/subtitle.py` — Whisper字幕生成（word-level対応）
+- `backend/app/services/jump_cut.py` — AIジャンプカット（フィラー・テンポ・区間マージ）
+- `backend/app/services/llm.py` — 言い直し検出用LLMクライアント（OpenAI/Anthropic切替）
+- `backend/app/data/jp_fillers.txt` — 日本語フィラー辞書
 - `backend/app/services/google_sheets.py` — Google Sheets連携
 - `backend/app/services/instagram.py` — Instagram Reels投稿
 - `backend/app/services/tiktok.py` — TikTok投稿

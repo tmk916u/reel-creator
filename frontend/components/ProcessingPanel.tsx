@@ -15,6 +15,7 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
     silence_threshold: -30,
     min_silence_duration: 0.5,
     enable_subtitles: false,
+    enable_jump_cut: false,
     font_size: "medium",
     subtitle_position: "bottom",
     subtitle_color: "white",
@@ -81,6 +82,32 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
             <span>短い無音も削除</span>
             <span>長い無音のみ削除</span>
           </div>
+        </div>
+
+        {/* AIジャンプカットトグル */}
+        <div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-300">AIジャンプカット</span>
+            <button
+              onClick={() =>
+                setSettings((s) => ({ ...s, enable_jump_cut: !s.enable_jump_cut }))
+              }
+              className={`
+                relative w-12 h-6 rounded-full transition-colors
+                ${settings.enable_jump_cut ? "bg-purple-500" : "bg-gray-600"}
+              `}
+            >
+              <span
+                className={`
+                  absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform
+                  ${settings.enable_jump_cut ? "translate-x-6" : ""}
+                `}
+              />
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            フィラー・言い直し・長い間を自動で削減します（LLM API使用）
+          </p>
         </div>
 
         {/* 字幕トグル */}

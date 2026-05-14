@@ -1,5 +1,4 @@
 # backend/tests/test_silence.py
-import pytest
 from app.services.silence import compute_voice_segments
 
 
@@ -36,3 +35,36 @@ def test_compute_voice_segments_silence_at_start():
     silences = [{"start": 0.0, "end": 3.0}]
     result = compute_voice_segments(silences, 10.0)
     assert result == [{"start": 3.0, "end": 10.0}]
+
+
+def test_compute_voice_segments_with_extra_cuts():
+    """extra_cuts を無音区間とマージして処理する"""
+    silences = [{"start": 2.0, "end": 4.0}]
+    extra = [{"start": 6.0, "end": 7.0}]
+    result = compute_voice_segments(silences, 10.0, extra_cuts=extra)
+    assert result == [
+        {"start": 0.0, "end": 2.0},
+        {"start": 4.0, "end": 6.0},
+        {"start": 7.0, "end": 10.0},
+    ]
+
+
+def test_compute_voice_segments_overlapping_cuts():
+    """無音と extra_cuts が重複しても二重カウントしない"""
+    silences = [{"start": 2.0, "end": 5.0}]
+    extra = [{"start": 4.0, "end": 6.0}]
+    result = compute_voice_segments(silences, 10.0, extra_cuts=extra)
+    assert result == [
+        {"start": 0.0, "end": 2.0},
+        {"start": 6.0, "end": 10.0},
+    ]
+
+
+def test_compute_voice_segments_only_extra_cuts():
+    """無音なしで extra_cuts だけでも動作する"""
+    extra = [{"start": 3.0, "end": 5.0}]
+    result = compute_voice_segments([], 10.0, extra_cuts=extra)
+    assert result == [
+        {"start": 0.0, "end": 3.0},
+        {"start": 5.0, "end": 10.0},
+    ]

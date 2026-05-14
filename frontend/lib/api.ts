@@ -12,6 +12,7 @@ export interface ProcessSettings {
   silence_threshold: number;
   min_silence_duration: number;
   enable_subtitles: boolean;
+  enable_jump_cut?: boolean;
   font_size: "small" | "medium" | "large";
   subtitle_position: "bottom" | "center";
   subtitle_color: "white" | "yellow";

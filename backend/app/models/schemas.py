@@ -30,6 +30,7 @@ class ProcessRequest(BaseModel):
     silence_threshold: float = -30.0  # dB
     min_silence_duration: float = 0.5  # seconds
     enable_subtitles: bool = False
+    enable_jump_cut: bool = False
     font_size: FontSize = FontSize.MEDIUM
     subtitle_position: SubtitlePosition = SubtitlePosition.BOTTOM
     subtitle_color: SubtitleColor = SubtitleColor.WHITE

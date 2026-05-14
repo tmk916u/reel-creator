@@ -8,3 +8,5 @@ requests
 gspread==6.1.4
 google-auth==2.38.0
 python-dotenv==1.0.1
+openai==1.55.0
+anthropic==0.40.0

@@ -14,7 +14,13 @@ from app.services.ffmpeg import (
     get_video_duration, extract_audio, detect_silence, cut_and_concat, burn_subtitles,
 )
 from app.services.silence import compute_voice_segments
-from app.services.subtitle import transcribe_audio
+from app.services.subtitle import (
+    transcribe_audio, transcribe_with_words, segments_to_srt, words_to_segments,
+)
+from app.services.jump_cut import (
+    detect_filler_ranges, detect_tempo_ranges, load_fillers, merge_ranges,
+)
+from app.services.llm import detect_restatements
 
 router = APIRouter(prefix="/api", tags=["video"])
 
@@ -23,12 +29,30 @@ MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
 MAX_DURATION = 180  # 3 minutes
 ALLOWED_TYPES = {"video/mp4", "video/quicktime", "video/webm"}
 
-# Job state store (in-memory)
 job_store: dict[str, dict] = {}
 
 
 def _font_size_to_px(size: FontSize) -> int:
     return {"small": 16, "medium": 22, "large": 30}[size.value]
+
+
+def _filter_words_by_segments(words: list[dict], segments: list[dict]) -> list[dict]:
+    """カット後動画のタイムスタンプに合うように word を再マッピングする。"""
+    if not words or not segments:
+        return []
+    remapped: list[dict] = []
+    offset = 0.0
+    for seg in segments:
+        seg_start, seg_end = seg["start"], seg["end"]
+        for w in words:
+            if w["start"] >= seg_start and w["end"] <= seg_end:
+                remapped.append({
+                    "start": offset + (w["start"] - seg_start),
+                    "end": offset + (w["end"] - seg_start),
+                    "text": w["text"],
+                })
+        offset += seg_end - seg_start
+    return remapped
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -81,10 +105,40 @@ def _run_processing(job_id: str, settings: ProcessRequest):
         extract_audio(input_path, audio_path)
 
         # Stage 2: Silence detection
-        job.update({"stage": "silence_detect", "progress": 30, "message": "無音区間を解析中..."})
+        job.update({"stage": "silence_detect", "progress": 25, "message": "無音区間を解析中..."})
         silences = detect_silence(audio_path, settings.silence_threshold, settings.min_silence_duration)
         original_duration = get_video_duration(input_path)
-        voice_segments = compute_voice_segments(silences, original_duration)
+
+        # Stage 2.5 / 3: AI Jump Cut（有効時）
+        words: list[dict] = []
+        pre_cut_segments: list[dict] = []
+        extra_cuts: list[dict] = []
+        jump_cut_notes: list[str] = []
+
+        if settings.enable_jump_cut:
+            job.update({
+                "stage": "transcribe_for_cut",
+                "progress": 30,
+                "message": "AIで音声を解析中...",
+            })
+            words, pre_cut_segments = transcribe_with_words(audio_path)
+
+            job.update({
+                "stage": "jump_cut",
+                "progress": 40,
+                "message": "AIで不要な間を検出中...",
+            })
+            fillers = load_fillers()
+            filler_cuts = detect_filler_ranges(words, fillers)
+            tempo_cuts = detect_tempo_ranges(words)
+            restatement_cuts = detect_restatements(words)
+            if not restatement_cuts and words:
+                jump_cut_notes.append("言い直し検出はスキップしました（LLM未設定または失敗）")
+            extra_cuts = merge_ranges(filler_cuts + tempo_cuts + restatement_cuts)
+
+        voice_segments = compute_voice_segments(
+            silences, original_duration, extra_cuts=extra_cuts,
+        )
 
         if not voice_segments:
             job.update({
@@ -95,23 +149,29 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             })
             return
 
-        # Stage 3: Cut & concat
-        job.update({"stage": "cut_concat", "progress": 50, "message": "無音区間を削除中..."})
+        # Stage 4: Cut & concat
+        job.update({"stage": "cut_concat", "progress": 55, "message": "不要区間を削除中..."})
         cut_output = str(job_dir / "cut.mp4")
         cut_and_concat(input_path, voice_segments, cut_output)
 
         processed_duration = get_video_duration(cut_output)
         final_output = cut_output
 
-        # Stage 4: Subtitles (optional)
+        # Stage 5: Subtitles (optional)
         if settings.enable_subtitles:
-            job.update({"stage": "transcribe", "progress": 70, "message": "字幕を生成中..."})
-            cut_audio = str(job_dir / "cut_audio.wav")
-            extract_audio(cut_output, cut_audio)
+            job.update({"stage": "transcribe", "progress": 75, "message": "字幕を生成中..."})
             srt_path = str(job_dir / "subtitles.srt")
-            transcribe_audio(cut_audio, srt_path)
 
-            job.update({"stage": "burn_subtitles", "progress": 85, "message": "字幕を動画に焼き込み中..."})
+            if words:
+                remapped = _filter_words_by_segments(words, voice_segments)
+                sub_segments = words_to_segments(remapped)
+                Path(srt_path).write_text(segments_to_srt(sub_segments), encoding="utf-8")
+            else:
+                cut_audio = str(job_dir / "cut_audio.wav")
+                extract_audio(cut_output, cut_audio)
+                transcribe_audio(cut_audio, srt_path)
+
+            job.update({"stage": "burn_subtitles", "progress": 88, "message": "字幕を動画に焼き込み中..."})
             subtitled_output = str(job_dir / "output.mp4")
             burn_subtitles(
                 cut_output, srt_path, subtitled_output,
@@ -127,11 +187,15 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             shutil.copy2(final_output, str(output_path))
 
         silence_removed = original_duration - processed_duration
+        final_message = "処理が完了しました"
+        if jump_cut_notes:
+            final_message += "（" + " / ".join(jump_cut_notes) + "）"
+
         job.update({
             "status": JobStatus.COMPLETED,
             "stage": "done",
             "progress": 100,
-            "message": "処理が完了しました",
+            "message": final_message,
             "original_duration": round(original_duration, 2),
             "processed_duration": round(processed_duration, 2),
             "silence_removed": round(silence_removed, 2),
