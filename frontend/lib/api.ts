@@ -126,3 +126,60 @@ export async function getResult(jobId: string): Promise<JobResult> {
 export function getDownloadUrl(jobId: string): string {
   return `${API_URL}/api/download/${jobId}`;
 }
+
+export interface CaptionsResult {
+  job_id: string;
+  tiktok_caption: string;
+  instagram_caption: string;
+  hashtags: string;
+}
+
+export async function generateCaptions(jobId: string): Promise<CaptionsResult> {
+  const res = await fetch(`${API_URL}/api/captions/${jobId}`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "キャプション生成に失敗");
+  }
+  return res.json();
+}
+
+export async function writeCaptionsToSheet(
+  jobId: string,
+  payload: {
+    sheet_row: number;
+    ig_caption: string;
+    tiktok_caption: string;
+    hashtags: string;
+  }
+): Promise<void> {
+  const res = await fetch(`${API_URL}/api/captions/${jobId}/write-sheet`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "シート書き込みに失敗");
+  }
+}
+
+export interface BuzzScoreResult {
+  job_id: string;
+  overall: number;
+  scores: {
+    hook: number; clarity: number; density: number; structure: number;
+    cta: number; pace: number; searchability: number; length_fit: number;
+  };
+  strengths: string[];
+  weaknesses: string[];
+  suggestions: string[];
+}
+
+export async function getBuzzScore(jobId: string): Promise<BuzzScoreResult> {
+  const res = await fetch(`${API_URL}/api/buzz-score/${jobId}`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "バズスコア取得に失敗");
+  }
+  return res.json();
+}

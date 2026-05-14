@@ -392,3 +392,240 @@ def mix_bgm(
         raise RuntimeError(f"ffmpeg bgm mix failed: {result.stderr}")
 
     return output_path
+
+
+def mix_sfx_at_cuts(
+    video_path: str,
+    sfx_path: str,
+    output_path: str,
+    cut_timestamps_sec: list[float],
+    sfx_volume: float = 0.15,
+) -> str:
+    """カット境界のタイムスタンプに効果音を重ねる。
+
+    Args:
+        cut_timestamps_sec: カット後動画の時間軸での境界秒数リスト
+        sfx_volume: 効果音の音量 (0.0-1.0)
+    """
+    if not cut_timestamps_sec or not Path(sfx_path).exists():
+        cmd = ["ffmpeg", "-y", "-i", video_path, "-c", "copy", output_path]
+        subprocess.run(cmd, check=True, capture_output=True)
+        return output_path
+
+    # 各タイムスタンプに delay 適用した SFX トラックを作って amix
+    filter_parts: list[str] = []
+    mix_inputs: list[str] = ["[0:a]"]
+    for i, t in enumerate(cut_timestamps_sec):
+        delay_ms = max(0, int(t * 1000))
+        filter_parts.append(
+            f"[1:a]adelay={delay_ms}|{delay_ms},volume={sfx_volume}[sfx{i}]"
+        )
+        mix_inputs.append(f"[sfx{i}]")
+
+    if not filter_parts:
+        cmd = ["ffmpeg", "-y", "-i", video_path, "-c", "copy", output_path]
+        subprocess.run(cmd, check=True, capture_output=True)
+        return output_path
+
+    filter_complex = (
+        ";".join(filter_parts)
+        + f";{''.join(mix_inputs)}amix=inputs={len(mix_inputs)}:duration=first:dropout_transition=0[aout]"
+    )
+
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path, "-i", sfx_path,
+        "-filter_complex", filter_complex,
+        "-map", "0:v", "-map", "[aout]",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg sfx mix failed: {result.stderr}")
+
+    return output_path
+
+
+_CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
+
+
+def apply_pipeline_combined(
+    input_video: str,
+    output_video: str,
+    workdir: Path,
+    *,
+    subtitle_file: str | None = None,
+    subtitle_force_style: str | None = None,  # for SRT
+    topics: list[dict] | None = None,  # [{index, start, end, label}]
+    topic_number_size: int = 150,
+    topic_label_size: int = 60,
+    hook_text: str | None = None,
+    hook_duration: float = 3.0,
+    hook_font_size: int = 80,
+    cta_text: str | None = None,
+    cta_duration: float = 3.0,
+    cta_font_size: int = 110,
+    bgm_path: str | None = None,
+    bgm_volume: float = 0.12,
+    bgm_fade: float = 1.5,
+    sfx_path: str | None = None,
+    sfx_timestamps_sec: list[float] | None = None,
+    sfx_volume: float = 0.15,
+) -> str:
+    """すべての動画オーバーレイ・音響処理を1つの ffmpeg パスでまとめて適用する。
+
+    現状の chain（subtitle→topics→hook→cta→bgm）を 6 パスから 1 パスに圧縮。
+    """
+    font_file = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
+    total_dur = get_video_duration(input_video)
+
+    # ====== 映像フィルタチェーン構築 ======
+    video_filters: list[str] = []
+
+    if subtitle_file:
+        if subtitle_file.lower().endswith(".ass"):
+            video_filters.append(f"subtitles={subtitle_file}")
+        else:
+            style = subtitle_force_style or ""
+            if style:
+                video_filters.append(f"subtitles={subtitle_file}:force_style='{style}'")
+            else:
+                video_filters.append(f"subtitles={subtitle_file}")
+
+    # トピック番号
+    if topics:
+        for i, t in enumerate(topics):
+            idx = int(t.get("index", i + 1))
+            if not (1 <= idx <= len(_CIRCLED)):
+                continue
+            number_char = _CIRCLED[idx - 1]
+            start_t = float(t["start"])
+            end_t = float(t["end"])
+            label = (t.get("label") or "").strip()
+            num_file = workdir / f"topic_num_{i}.txt"
+            num_file.write_text(number_char, encoding="utf-8")
+            video_filters.append(
+                f"drawtext=textfile={num_file}"
+                f":fontfile={font_file}:fontsize={topic_number_size}"
+                f":fontcolor=black:box=1:boxcolor=yellow@0.95:boxborderw=20"
+                f":x=w-text_w-50:y=80"
+                f":enable='between(t\\,{start_t:.3f}\\,{end_t:.3f})'"
+            )
+            if label:
+                label_file = workdir / f"topic_label_{i}.txt"
+                label_file.write_text(label, encoding="utf-8")
+                video_filters.append(
+                    f"drawtext=textfile={label_file}"
+                    f":fontfile={font_file}:fontsize={topic_label_size}"
+                    f":fontcolor=white:borderw=3:bordercolor=black"
+                    f":box=1:boxcolor=0xE91E63@0.92:boxborderw=18"
+                    f":x=w-text_w-50:y=80+{topic_number_size}+50"
+                    f":enable='between(t\\,{start_t:.3f}\\,{end_t:.3f})'"
+                )
+
+    # 冒頭フック
+    if hook_text and hook_text.strip():
+        hook_file = workdir / "hook.txt"
+        hook_file.write_text(hook_text, encoding="utf-8")
+        video_filters.append(
+            f"drawtext=textfile={hook_file}"
+            f":fontfile={font_file}:fontsize={hook_font_size}"
+            f":fontcolor=white:box=1:boxcolor=black@0.8:boxborderw=30"
+            f":x=(w-text_w)/2:y=h*0.18"
+            f":enable='lt(t\\,{hook_duration:.3f})'"
+        )
+
+    # 末尾CTA（点滅）
+    if cta_text and cta_text.strip():
+        cta_file = workdir / "cta.txt"
+        cta_file.write_text(cta_text, encoding="utf-8")
+        cta_start = max(0.0, total_dur - cta_duration)
+        video_filters.append(
+            f"drawtext=textfile={cta_file}"
+            f":fontfile={font_file}:fontsize={cta_font_size}"
+            f":fontcolor=black:box=1:boxcolor=black@0.9:boxborderw=35"
+            f":x=(w-text_w)/2:y=h*0.42"
+            f":enable='gt(t\\,{cta_start:.3f})'"
+        )
+        video_filters.append(
+            f"drawtext=textfile={cta_file}"
+            f":fontfile={font_file}:fontsize={cta_font_size}"
+            f":fontcolor=yellow:borderw=4:bordercolor=black"
+            f":x=(w-text_w)/2:y=h*0.42"
+            f":alpha='if(gt(t\\,{cta_start:.3f})\\,if(eq(mod(floor((t-{cta_start:.3f})*2)\\,2)\\,0)\\,1\\,0.5)\\,0)'"
+        )
+
+    # ====== 音声フィルタ構築 ======
+    extra_inputs: list[str] = []
+    audio_segments: list[str] = []
+    audio_mix_labels: list[str] = ["[0:a]"]
+    audio_idx_counter = 1
+
+    if bgm_path and Path(bgm_path).exists():
+        extra_inputs += ["-i", bgm_path]
+        bgm_input_idx = audio_idx_counter
+        audio_idx_counter += 1
+        fade_out_st = max(0.0, total_dur - bgm_fade)
+        audio_segments.append(
+            f"[{bgm_input_idx}:a]aloop=loop=-1:size=2e9,volume={bgm_volume},"
+            f"afade=t=in:d={bgm_fade:.2f},"
+            f"afade=t=out:d={bgm_fade:.2f}:st={fade_out_st:.3f},"
+            f"atrim=duration={total_dur:.3f}[bgm]"
+        )
+        audio_mix_labels.append("[bgm]")
+
+    if sfx_path and Path(sfx_path).exists() and sfx_timestamps_sec:
+        extra_inputs += ["-i", sfx_path]
+        sfx_input_idx = audio_idx_counter
+        audio_idx_counter += 1
+        for i, t in enumerate(sfx_timestamps_sec):
+            delay_ms = max(0, int(t * 1000))
+            audio_segments.append(
+                f"[{sfx_input_idx}:a]adelay={delay_ms}|{delay_ms},volume={sfx_volume}[sfx{i}]"
+            )
+            audio_mix_labels.append(f"[sfx{i}]")
+
+    # フィルタグラフ統合
+    parts: list[str] = []
+    has_video = bool(video_filters)
+    has_audio_extra = len(audio_mix_labels) > 1
+
+    if has_video:
+        parts.append(f"[0:v]{','.join(video_filters)}[vout]")
+    if has_audio_extra:
+        parts.extend(audio_segments)
+        parts.append(
+            f"{''.join(audio_mix_labels)}amix=inputs={len(audio_mix_labels)}"
+            f":duration=first:dropout_transition=0[aout]"
+        )
+
+    if not parts:
+        # 何もしない -> コピー
+        cmd = ["ffmpeg", "-y", "-i", input_video, "-c", "copy", output_video]
+        subprocess.run(cmd, check=True, capture_output=True)
+        return output_video
+
+    filter_complex = ";".join(parts)
+
+    cmd = ["ffmpeg", "-y", "-i", input_video] + extra_inputs + [
+        "-filter_complex", filter_complex,
+    ]
+    if has_video:
+        cmd += ["-map", "[vout]"]
+    else:
+        cmd += ["-map", "0:v"]
+    if has_audio_extra:
+        cmd += ["-map", "[aout]"]
+    else:
+        cmd += ["-map", "0:a"]
+    cmd += [
+        "-c:v", "libx264", "-preset", "fast",
+        "-c:a", "aac",
+        "-shortest",
+        output_video,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg combined pipeline failed: {result.stderr}")
+    return output_video

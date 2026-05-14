@@ -11,10 +11,12 @@ from app.models.schemas import (
     UploadResponse, ProcessRequest, ProcessResponse, ProgressEvent,
     JobStatus, JobResult, FontSize, SubtitlePosition, SubtitleColor,
     TranscribeRequest, TranscribeResponse, TranscriptSegment,
+    CaptionsResponse, WriteCaptionsRequest, BuzzScoreResponse, BuzzScoreDetail,
 )
 from app.services.ffmpeg import (
     get_video_duration, extract_audio, detect_silence, cut_and_concat, burn_subtitles,
-    overlay_hook_text, overlay_cta_text, overlay_topic_numbers, mix_bgm,
+    overlay_hook_text, overlay_cta_text, overlay_topic_numbers, mix_bgm, mix_sfx_at_cuts,
+    apply_pipeline_combined,
 )
 from app.services.silence import compute_voice_segments
 from app.services.subtitle import (
@@ -27,7 +29,7 @@ from app.services.jump_cut import (
 )
 from app.services.llm import (
     detect_restatements, correct_transcript_segments, extract_keywords, generate_hook,
-    detect_topics, select_bgm_style,
+    detect_topics, select_bgm_style, generate_captions, predict_buzz_score,
 )
 from app.services.vad import detect_silence_silero
 
@@ -190,6 +192,23 @@ async def transcribe_preview(job_id: str, settings: TranscribeRequest):
         "transcript_prompt": settings.transcript_prompt,
     }
 
+    # ファイルにも永続化（バックエンド再起動後も /api/captions, /api/buzz-score で使えるように）
+    try:
+        import json as _json
+        (job_dir / "transcript.json").write_text(
+            _json.dumps(
+                {
+                    "words": words,
+                    "segments": sub_segments,
+                    "prompt": settings.transcript_prompt,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
     return TranscribeResponse(
         job_id=job_id,
         segments=[
@@ -291,7 +310,18 @@ def _run_processing(job_id: str, settings: ProcessRequest):
         processed_duration = get_video_duration(cut_output)
         final_output = cut_output
 
-        # Stage 5: Subtitles (optional)
+        # ====== 演出パラメータ準備（後で1つの ffmpeg パスでまとめて適用） ======
+        subtitle_file_str: str | None = None
+        subtitle_force_style: str | None = None
+        sub_segments: list[dict] = []
+        topics_for_overlay: list[dict] | None = None
+        hook_text_str: str | None = None
+        cta_text_str: str | None = None
+        bgm_path_str: str | None = None
+        sfx_path_str: str | None = None
+        sfx_timestamps_list: list[float] | None = None
+
+        # Stage 5: Subtitles (optional) — ファイル生成のみ、焼き込みは後段で
         edited_provided = bool(settings.edited_segments)
         if settings.enable_subtitles:
             job.update({"stage": "transcribe", "progress": 75, "message": "字幕を生成中..."})
@@ -360,32 +390,74 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                     ),
                     encoding="utf-8",
                 )
-                subtitle_file = ass_path
+                subtitle_file_str = ass_path
             else:
                 if keywords:
                     for seg in sub_segments:
                         seg["text"] = apply_keyword_highlight(seg["text"], keywords)
                 Path(srt_path).write_text(segments_to_srt(sub_segments), encoding="utf-8")
-                subtitle_file = srt_path
+                subtitle_file_str = srt_path
+                # SRT 経由なら force_style を構築
+                _color_hex = "&H00FFFFFF" if settings.subtitle_color.value == "white" else "&H0000FFFF"
+                _alignment = 2 if settings.subtitle_position.value == "bottom" else 5
+                subtitle_force_style = (
+                    f"FontSize={_font_size_to_px(settings.font_size)},"
+                    f"PrimaryColour={_color_hex},"
+                    f"OutlineColour=&H00000000,"
+                    f"BackColour=&HC0000000,"
+                    f"Alignment={_alignment},"
+                    f"BorderStyle=3,Outline=3,Shadow=0,MarginV=40,Bold=1,"
+                    f"FontName=Noto Sans CJK JP"
+                )
 
-            job.update({"stage": "burn_subtitles", "progress": 88, "message": "字幕を動画に焼き込み中..."})
-            subtitled_output = str(job_dir / "output.mp4")
-            burn_subtitles(
-                cut_output, subtitle_file, subtitled_output,
-                font_size=_font_size_to_px(settings.font_size),
-                position=settings.subtitle_position.value,
-                color=settings.subtitle_color.value,
-            )
-            final_output = subtitled_output
+            # 後段の /api/captions /api/buzz-score 用に transcript を永続化
+            try:
+                import json as _json
+                import re as _re
+                _clean_segs = [
+                    {
+                        "start": s["start"], "end": s["end"],
+                        "text": _re.sub(r"<[^>]+>", "", s.get("text", "")),
+                    }
+                    for s in sub_segments
+                ]
+                (job_dir / "transcript.json").write_text(
+                    _json.dumps(
+                        {"segments": _clean_segs, "words": words},
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
 
-        # Stage 6: バズモード — 数字オーバーレイ・冒頭フック・CTA
+        # Stage 6: バズモード — トピック・フック・CTA・BGM・効果音 のパラメータ準備
         if settings.enable_buzz_mode:
-            # 数字オーバーレイ（トピック分割が検出できれば）
-            if 'sub_segments' in locals() and sub_segments and len(sub_segments) >= 4:
-                job.update({"stage": "buzz_topics", "progress": 90, "message": "ポイントを抽出中..."})
+            # 効果音タイムスタンプ
+            sfx_p = Path("/app/app/data/sfx/cut.mp3")
+            if sfx_p.exists() and len(voice_segments) >= 2:
+                cum = 0.0
+                cut_points: list[float] = []
+                for i, vs in enumerate(voice_segments):
+                    if i > 0:
+                        cut_points.append(round(cum, 3))
+                    cum += vs["end"] - vs["start"]
+                filtered: list[float] = []
+                for t in cut_points:
+                    if not filtered or t - filtered[-1] >= 0.5:
+                        filtered.append(t)
+                    if len(filtered) >= 20:
+                        break
+                if filtered:
+                    sfx_path_str = str(sfx_p)
+                    sfx_timestamps_list = filtered
+
+            # トピック番号
+            if sub_segments and len(sub_segments) >= 4:
+                job.update({"stage": "buzz_topics", "progress": 80, "message": "ポイントを抽出中..."})
                 texts_for_topics = [s["text"] for s in sub_segments]
                 topics_raw = detect_topics(texts_for_topics)
-                topics: list[dict] = []
+                tlist: list[dict] = []
                 for i, t in enumerate(topics_raw):
                     seg_idx = t["start_seg"]
                     if seg_idx >= len(sub_segments):
@@ -396,66 +468,74 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                         end_time = sub_segments[min(next_seg, len(sub_segments) - 1)]["start"]
                     else:
                         end_time = sub_segments[-1]["end"]
-                    topics.append({
+                    tlist.append({
                         "index": t["index"],
                         "start": start_time,
                         "end": end_time,
                         "label": t["label"],
                     })
-                if topics:
-                    topics_output = str(job_dir / "with_topics.mp4")
-                    overlay_topic_numbers(final_output, topics_output, topics)
-                    final_output = topics_output
+                if tlist:
+                    topics_for_overlay = tlist
 
             # 冒頭フック
-            job.update({"stage": "buzz_hook", "progress": 93, "message": "冒頭フックを生成中..."})
+            job.update({"stage": "buzz_hook", "progress": 85, "message": "冒頭フックを生成中..."})
             hook_source_text = ""
-            if 'sub_segments' in locals() and sub_segments:
+            if sub_segments:
                 hook_source_text = " ".join(s["text"] for s in sub_segments)
             elif words:
                 hook_source_text = " ".join(w["text"] for w in words)
-
-            hook_text = generate_hook(hook_source_text) if hook_source_text else ""
-            if hook_text:
-                hook_output = str(job_dir / "with_hook.mp4")
-                overlay_hook_text(final_output, hook_output, hook_text, duration=3.0)
-                final_output = hook_output
-            else:
+            hook_text_str = generate_hook(hook_source_text) if hook_source_text else None
+            if not hook_text_str:
                 jump_cut_notes.append("フック生成をスキップしました（LLM未設定または失敗）")
 
-            # CTA オーバーレイ（末尾3秒）
-            job.update({"stage": "buzz_cta", "progress": 96, "message": "CTAを追加中..."})
-            cta_text = "👇 保存して見返してね"
-            cta_output = str(job_dir / "with_cta.mp4")
-            overlay_cta_text(final_output, cta_output, cta_text, duration=3.0)
-            final_output = cta_output
+            # CTA
+            cta_text_str = "👇 保存して見返してね"
 
-            # BGM 自動追加（ファイルが存在すれば）
-            job.update({"stage": "buzz_bgm", "progress": 98, "message": "BGMを追加中..."})
-            bgm_source_text = hook_source_text or " ".join(w["text"] for w in words[:200] if words)
+            # BGM
+            bgm_source_text = hook_source_text or (
+                " ".join(w["text"] for w in words[:200]) if words else ""
+            )
             bgm_style = select_bgm_style(bgm_source_text) if bgm_source_text else ""
             if bgm_style:
                 bgm_dir = Path("/app/app/data/bgm")
-                bgm_file = None
                 for ext in (".mp3", ".m4a", ".wav"):
                     candidate = bgm_dir / f"{bgm_style}{ext}"
                     if candidate.exists():
-                        bgm_file = candidate
+                        bgm_path_str = str(candidate)
                         break
-                if bgm_file:
-                    bgm_output = str(job_dir / "with_bgm.mp4")
-                    try:
-                        mix_bgm(final_output, str(bgm_file), bgm_output)
-                        final_output = bgm_output
-                    except Exception as e:
-                        jump_cut_notes.append(f"BGM合成失敗: {e}")
-                else:
+                if not bgm_path_str:
                     jump_cut_notes.append(f"BGMファイル未配置（{bgm_style}）")
 
-        # Rename final output
+        # Stage 7: 全演出を1パスで適用
+        needs_combined = any([
+            subtitle_file_str, topics_for_overlay, hook_text_str, cta_text_str,
+            bgm_path_str, sfx_path_str,
+        ])
         output_path = job_dir / "output.mp4"
-        if str(output_path) != final_output:
-            shutil.copy2(final_output, str(output_path))
+        if needs_combined:
+            job.update({"stage": "render", "progress": 90, "message": "演出を統合適用中..."})
+            try:
+                apply_pipeline_combined(
+                    cut_output, str(output_path), job_dir,
+                    subtitle_file=subtitle_file_str,
+                    subtitle_force_style=subtitle_force_style,
+                    topics=topics_for_overlay,
+                    hook_text=hook_text_str,
+                    cta_text=cta_text_str,
+                    bgm_path=bgm_path_str,
+                    sfx_path=sfx_path_str,
+                    sfx_timestamps_sec=sfx_timestamps_list,
+                )
+                final_output = str(output_path)
+            except Exception as e:
+                jump_cut_notes.append(f"統合パス失敗: {e}")
+                # フォールバック: 何もせずカット結果を使う
+                shutil.copy2(cut_output, str(output_path))
+                final_output = str(output_path)
+        else:
+            if str(output_path) != cut_output:
+                shutil.copy2(cut_output, str(output_path))
+            final_output = str(output_path)
 
         silence_removed = original_duration - processed_duration
         final_message = "処理が完了しました"
@@ -560,4 +640,90 @@ async def download_video(job_id: str):
         str(output_path),
         media_type="video/mp4",
         filename=f"reel_{job_id[:8]}.mp4",
+    )
+
+
+def _get_cached_transcript(job_id: str) -> str:
+    """job_store または job_dir/transcript.json からキャッシュされた transcript テキストを取得する。"""
+    cached = job_store.get(job_id) or {}
+    segs = cached.get("transcript_segments") or []
+    if segs:
+        return " ".join(s.get("text", "") for s in segs)
+    words = cached.get("transcript_words") or []
+    if words:
+        return " ".join(w.get("text", "") for w in words)
+
+    # メモリに無い場合は disk から読み込み（再起動後の救済）
+    try:
+        import json as _json
+        path = TMP_DIR / job_id / "transcript.json"
+        if path.exists():
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            disk_segs = data.get("segments") or []
+            if disk_segs:
+                return " ".join(s.get("text", "") for s in disk_segs)
+            disk_words = data.get("words") or []
+            if disk_words:
+                return " ".join(w.get("text", "") for w in disk_words)
+    except Exception:
+        pass
+
+    return ""
+
+
+@router.post("/captions/{job_id}", response_model=CaptionsResponse)
+async def generate_captions_endpoint(job_id: str):
+    """動画の transcript から TikTok / Instagram 用のキャプション＆ハッシュタグを生成。"""
+    text = _get_cached_transcript(job_id)
+    if not text:
+        raise HTTPException(404, "Transcript not found for this job")
+
+    captions = generate_captions(text)
+    if not captions["tiktok_caption"] and not captions["instagram_caption"]:
+        raise HTTPException(503, "LLM caption generation failed (check LLM_PROVIDER)")
+
+    return CaptionsResponse(
+        job_id=job_id,
+        tiktok_caption=captions["tiktok_caption"],
+        instagram_caption=captions["instagram_caption"],
+        hashtags=captions["hashtags"],
+    )
+
+
+@router.post("/captions/{job_id}/write-sheet")
+async def write_captions_to_sheet_endpoint(job_id: str, payload: WriteCaptionsRequest):
+    """生成済みキャプションを Google Sheets の指定行に書き込む。"""
+    try:
+        from app.services.google_sheets import write_captions_to_sheet
+        write_captions_to_sheet(
+            payload.sheet_row,
+            payload.ig_caption,
+            payload.tiktok_caption,
+            payload.hashtags,
+        )
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Sheets write failed: {e}")
+    return {"job_id": job_id, "sheet_row": payload.sheet_row, "ok": True}
+
+
+@router.post("/buzz-score/{job_id}", response_model=BuzzScoreResponse)
+async def buzz_score_endpoint(job_id: str):
+    """動画の transcript からバズり予測スコアと改善案を返す。"""
+    text = _get_cached_transcript(job_id)
+    if not text:
+        raise HTTPException(404, "Transcript not found for this job")
+
+    result = predict_buzz_score(text)
+    if result is None:
+        raise HTTPException(503, "LLM buzz score prediction failed (check LLM_PROVIDER)")
+
+    return BuzzScoreResponse(
+        job_id=job_id,
+        overall=result["overall"],
+        scores=BuzzScoreDetail(**result["scores"]),
+        strengths=result["strengths"],
+        weaknesses=result["weaknesses"],
+        suggestions=result["suggestions"],
     )

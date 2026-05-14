@@ -28,3 +28,6 @@ credentials/
 backend/app/data/bgm/*.mp3
 backend/app/data/bgm/*.wav
 backend/app/data/bgm/*.m4a
+backend/app/data/sfx/*.mp3
+backend/app/data/sfx/*.wav
+backend/app/data/sfx/*.m4a

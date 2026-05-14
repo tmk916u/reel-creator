@@ -468,3 +468,156 @@ def select_bgm_style(transcript_text: str) -> str:
         return ""
     logger.info("LLM BGM style: %s", style)
     return style
+
+
+_CAPTIONS_SYSTEM_PROMPT = """あなたは TikTok / Instagram Reels の投稿文を作成するアシスタントです。
+入力された日本語の文字起こしから、それぞれのプラットフォームに最適化された投稿文とハッシュタグを生成してください。
+
+ルール:
+- **tiktok_caption**: TikTok向け。煽り強め、絵文字多用、120文字以内、改行可
+- **instagram_caption**: Instagram向け。落ち着き目、教育的、200文字以内、改行可、最後にCTA
+- **hashtags**: 10〜15個、日本語＋英語混在OK、人気＋ニッチタグの混合、#つき
+- 動画内容と整合（誇大表現はNG）
+- 文字数を厳密に守る
+
+出力は必ず以下の JSON 形式で返す:
+{
+  "tiktok_caption": "...",
+  "instagram_caption": "...",
+  "hashtags": "#tag1 #tag2 ..."
+}"""
+
+
+class _CaptionsResponse(BaseModel):
+    tiktok_caption: str = ""
+    instagram_caption: str = ""
+    hashtags: str = ""
+
+
+def generate_captions(transcript_text: str) -> dict[str, str]:
+    """LLM で TikTok / Instagram 用のキャプションとハッシュタグを生成する。
+
+    Returns:
+        {"tiktok_caption": str, "instagram_caption": str, "hashtags": str}
+        失敗・未設定時は全て空文字。
+    """
+    empty = {"tiktok_caption": "", "instagram_caption": "", "hashtags": ""}
+    if not transcript_text.strip():
+        return empty
+
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    if provider not in ("openai", "anthropic"):
+        return empty
+    if provider == "openai" and not os.getenv("OPENAI_API_KEY"):
+        return empty
+    if provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
+        return empty
+
+    try:
+        if provider == "openai":
+            raw = _call_openai(transcript_text, system_prompt=_CAPTIONS_SYSTEM_PROMPT)
+        else:
+            raw = _call_anthropic(transcript_text, system_prompt=_CAPTIONS_SYSTEM_PROMPT)
+        payload = _extract_json(raw)
+        parsed = _CaptionsResponse.model_validate(payload)
+    except (ValidationError, json.JSONDecodeError, Exception) as e:
+        logger.warning("LLM captions generation failed: %s", e)
+        return empty
+
+    result = {
+        "tiktok_caption": parsed.tiktok_caption.strip(),
+        "instagram_caption": parsed.instagram_caption.strip(),
+        "hashtags": parsed.hashtags.strip(),
+    }
+    logger.info(
+        "LLM captions generated: TikTok %d chars, IG %d chars, %d hashtags",
+        len(result["tiktok_caption"]),
+        len(result["instagram_caption"]),
+        result["hashtags"].count("#"),
+    )
+    return result
+
+
+_BUZZ_SCORE_SYSTEM_PROMPT = """あなたは TikTok / Reels のバズり予測アシスタントです。
+入力された動画の文字起こしを読み、8つの軸で 0-10 点評価し、改善案も提示してください。
+
+評価軸:
+- hook: 冒頭3秒で釘付けになるか
+- clarity: テーマの明確さ
+- density: 情報密度（飽きずに見られるか）
+- structure: 構造（起承転結、ポイント整理）
+- cta: 視聴後の行動誘導
+- pace: テンポ（カット・間）
+- searchability: トレンドワード・検索性
+- length_fit: プラットフォーム適合（30〜90秒推奨）
+
+各軸は 0-10 の整数。総合は8軸の平均（小数1桁）。
+
+出力は必ず以下の JSON 形式で返す:
+{
+  "overall": 7.6,
+  "scores": {"hook": 9, "clarity": 8, ...},
+  "strengths": ["強み1", "強み2", ...],
+  "weaknesses": ["改善点1", "改善点2", ...],
+  "suggestions": ["具体的アクション1", "具体的アクション2", ...]
+}
+
+strengths は最大3個、weaknesses は最大4個、suggestions は最大4個、優先順に並べる。"""
+
+
+class _ScoresDetail(BaseModel):
+    hook: int = 0
+    clarity: int = 0
+    density: int = 0
+    structure: int = 0
+    cta: int = 0
+    pace: int = 0
+    searchability: int = 0
+    length_fit: int = 0
+
+
+class _BuzzScoreResponse(BaseModel):
+    overall: float = 0.0
+    scores: _ScoresDetail = Field(default_factory=_ScoresDetail)
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+
+
+def predict_buzz_score(transcript_text: str) -> dict | None:
+    """LLM で動画のバズり予測スコアと改善案を生成する。
+
+    Returns:
+        dict (overall, scores, strengths, weaknesses, suggestions) or None on failure.
+    """
+    if not transcript_text.strip():
+        return None
+
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    if provider not in ("openai", "anthropic"):
+        return None
+    if provider == "openai" and not os.getenv("OPENAI_API_KEY"):
+        return None
+    if provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
+        return None
+
+    try:
+        if provider == "openai":
+            raw = _call_openai(transcript_text, system_prompt=_BUZZ_SCORE_SYSTEM_PROMPT)
+        else:
+            raw = _call_anthropic(transcript_text, system_prompt=_BUZZ_SCORE_SYSTEM_PROMPT)
+        payload = _extract_json(raw)
+        parsed = _BuzzScoreResponse.model_validate(payload)
+    except (ValidationError, json.JSONDecodeError, Exception) as e:
+        logger.warning("LLM buzz score prediction failed: %s", e)
+        return None
+
+    result = {
+        "overall": round(float(parsed.overall), 1),
+        "scores": parsed.scores.model_dump(),
+        "strengths": parsed.strengths[:3],
+        "weaknesses": parsed.weaknesses[:4],
+        "suggestions": parsed.suggestions[:4],
+    }
+    logger.info("LLM buzz score: %.1f / 10", result["overall"])
+    return result

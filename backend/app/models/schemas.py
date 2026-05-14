@@ -60,6 +60,40 @@ class TranscribeResponse(BaseModel):
     segments: list[TranscriptSegment]
 
 
+class CaptionsResponse(BaseModel):
+    job_id: str
+    tiktok_caption: str
+    instagram_caption: str
+    hashtags: str
+
+
+class WriteCaptionsRequest(BaseModel):
+    sheet_row: int
+    ig_caption: str
+    tiktok_caption: str
+    hashtags: str
+
+
+class BuzzScoreDetail(BaseModel):
+    hook: int = 0
+    clarity: int = 0
+    density: int = 0
+    structure: int = 0
+    cta: int = 0
+    pace: int = 0
+    searchability: int = 0
+    length_fit: int = 0
+
+
+class BuzzScoreResponse(BaseModel):
+    job_id: str
+    overall: float
+    scores: BuzzScoreDetail
+    strengths: list[str]
+    weaknesses: list[str]
+    suggestions: list[str]
+
+
 class UploadResponse(BaseModel):
     job_id: str
     filename: str

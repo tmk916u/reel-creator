@@ -30,10 +30,13 @@ def words_to_segments(
     words: list[dict],
     max_chars: int = 18,
     max_gap: float = 0.6,
+    lead_time: float = 0.12,
+    tail_time: float = 0.15,
 ) -> list[dict]:
     """単語リストを字幕表示用のセグメントへグループ化する。
 
     句読点・長い無音・最大文字数で区切る。
+    視聴者が読みやすいように、字幕の開始を lead_time だけ早め、終わりを tail_time だけ伸ばす。
     """
     if not words:
         return []
@@ -71,6 +74,22 @@ def words_to_segments(
 
     if current_words:
         flush()
+
+    # 視認性向上: lead_time だけ前倒し / tail_time だけ後ろに伸ばす
+    # ただし隣のセグメントと被らないよう調整
+    for i, seg in enumerate(segments):
+        if i > 0:
+            prev_end = segments[i - 1]["end"]
+            min_start = prev_end + 0.01
+        else:
+            min_start = 0.0
+        seg["start"] = max(min_start, seg["start"] - lead_time)
+
+        next_start = segments[i + 1]["start"] if i + 1 < len(segments) else None
+        candidate_end = seg["end"] + tail_time
+        if next_start is not None:
+            candidate_end = min(candidate_end, next_start - 0.01)
+        seg["end"] = max(seg["end"], candidate_end)
 
     return segments
 
@@ -219,6 +238,34 @@ def apply_keyword_highlight(text: str, keywords: list[str], color: str = "#FFD70
 _DEFAULT_INITIAL_PROMPT = "日本語で話している動画の文字起こしです。"
 
 
+from functools import lru_cache
+
+
+@lru_cache(maxsize=2)
+def _load_whisperx_model(model_size: str, language: str, initial_prompt: str):
+    """WhisperX のロード済みモデルをキャッシュして返す（プロセス内で再利用）。"""
+    import whisperx
+    return whisperx.load_model(
+        model_size, device="cpu", compute_type="int8",
+        language=language,
+        asr_options={"initial_prompt": initial_prompt},
+    )
+
+
+@lru_cache(maxsize=1)
+def _load_whisperx_align_model(language_code: str):
+    """WhisperX のアライメントモデルをキャッシュして返す。"""
+    import whisperx
+    return whisperx.load_align_model(language_code=language_code, device="cpu")
+
+
+@lru_cache(maxsize=2)
+def _load_faster_whisper_model(model_size: str):
+    """faster-whisper のロード済みモデルをキャッシュ。"""
+    from faster_whisper import WhisperModel
+    return WhisperModel(model_size, device="cpu", compute_type="int8")
+
+
 def _transcribe_with_whisperx(
     audio_path: str,
     initial_prompt: str,
@@ -252,17 +299,11 @@ def _transcribe_with_whisperx(
 
     try:
         audio = whisperx.load_audio(audio_path)
-        model = whisperx.load_model(
-            model_size, device="cpu", compute_type="int8",
-            language="ja",
-            asr_options={"initial_prompt": initial_prompt},
-        )
+        model = _load_whisperx_model(model_size, "ja", initial_prompt)
         result = model.transcribe(audio, language="ja", batch_size=4)
 
         # 単語アライメント（wav2vec2 forced alignment）
-        align_model, metadata = whisperx.load_align_model(
-            language_code="ja", device="cpu",
-        )
+        align_model, metadata = _load_whisperx_align_model("ja")
         result = whisperx.align(
             result["segments"], align_model, metadata, audio, device="cpu",
             return_char_alignments=False,
@@ -308,10 +349,8 @@ def transcribe_with_words(
     if result is not None:
         return result
 
-    # フォールバック: faster-whisper
-    from faster_whisper import WhisperModel
-
-    model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    # フォールバック: faster-whisper（キャッシュ済みモデルを利用）
+    model = _load_faster_whisper_model(model_size)
     segments_iter, _info = model.transcribe(
         audio_path,
         language="ja",

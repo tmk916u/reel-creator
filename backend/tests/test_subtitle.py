@@ -32,7 +32,7 @@ def test_words_to_segments_punctuation_split():
         {"start": 1.7, "end": 2.1, "text": "は"},
         {"start": 2.1, "end": 2.5, "text": "晴れ。"},
     ]
-    segments = words_to_segments(words)
+    segments = words_to_segments(words, lead_time=0, tail_time=0)
     assert len(segments) == 2
     assert segments[0]["text"] == "今日は雨。"
     assert segments[0]["start"] == 0.0
@@ -47,10 +47,25 @@ def test_words_to_segments_gap_split():
         {"start": 0.5, "end": 1.0, "text": "い"},
         {"start": 2.0, "end": 2.5, "text": "う"},  # 1秒のギャップ
     ]
-    segments = words_to_segments(words, max_gap=0.6)
+    segments = words_to_segments(words, max_gap=0.6, lead_time=0, tail_time=0)
     assert len(segments) == 2
     assert segments[0]["text"] == "あい"
     assert segments[1]["text"] == "う"
+
+
+def test_words_to_segments_lead_tail_padding():
+    """lead_time / tail_time が字幕表示時間を拡張する"""
+    words = [
+        {"start": 1.0, "end": 1.5, "text": "あ。"},
+        {"start": 3.0, "end": 3.5, "text": "い。"},
+    ]
+    segments = words_to_segments(words, lead_time=0.1, tail_time=0.2)
+    # 1つ目: start 早めに、end 後ろに伸ばす（次の start-0.01 を超えない）
+    assert segments[0]["start"] == 0.9
+    assert segments[0]["end"] == 1.7
+    # 2つ目: start 前倒し、最後なので end は単純に+0.2
+    assert segments[1]["start"] == 2.9
+    assert abs(segments[1]["end"] - 3.7) < 1e-9
 
 
 def test_words_to_segments_empty():

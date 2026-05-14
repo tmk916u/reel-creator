@@ -52,7 +52,8 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
     enable_subtitles: false,
     enable_jump_cut: false,
     enable_buzz_mode: false,
-    transcript_prompt: "",
+    transcript_prompt:
+      "整体師が血流・筋肉・老廃物・不定愁訴・健康・整骨院・整体・姿勢・自律神経について解説する動画です。",
     font_size: "medium",
     subtitle_position: "bottom",
     subtitle_color: "white",

@@ -76,3 +76,18 @@ def update_post_status(row_number: int) -> None:
     # Status column (B) = col 2, Posted date column (E) = col 5 (1-indexed)
     worksheet.update_cell(row_number, COLUMNS["status"] + 1, "投稿済み")
     worksheet.update_cell(row_number, COLUMNS["posted_date"] + 1, date.today().strftime("%Y/%m/%d"))
+
+
+def write_captions_to_sheet(
+    row_number: int,
+    ig_caption: str,
+    tiktok_caption: str,
+    hashtags: str,
+) -> None:
+    """生成されたキャプションとハッシュタグをシートに書き込む。"""
+    spreadsheet = get_sheet_client()
+    worksheet = spreadsheet.sheet1
+
+    worksheet.update_cell(row_number, COLUMNS["ig_caption"] + 1, ig_caption)
+    worksheet.update_cell(row_number, COLUMNS["tiktok_caption"] + 1, tiktok_caption)
+    worksheet.update_cell(row_number, COLUMNS["hashtags"] + 1, hashtags)
