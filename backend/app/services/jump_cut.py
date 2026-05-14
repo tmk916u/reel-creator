@@ -4,6 +4,54 @@ from pathlib import Path
 _PUNCTUATION = "、。！？!?."
 
 
+def load_corrections(path: str | Path | None = None) -> dict[str, str]:
+    """同音異義語の置換辞書をロードする。
+
+    Args:
+        path: 辞書ファイルのパス。None の場合は backend/app/data/jp_corrections.txt を使用。
+
+    Returns:
+        {誤認識: 正解} の dict。ファイルが見つからない場合は空 dict。
+    """
+    if path is None:
+        path = Path(__file__).resolve().parent.parent / "data" / "jp_corrections.txt"
+    path = Path(path)
+
+    if not path.exists():
+        return {}
+
+    corrections: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "→" in line:
+            wrong, right = line.split("→", 1)
+            wrong, right = wrong.strip(), right.strip()
+            if wrong and right:
+                corrections[wrong] = right
+    return corrections
+
+
+def apply_corrections_to_text(text: str, corrections: dict[str, str]) -> str:
+    """文字列に対して置換辞書を適用する。"""
+    if not corrections:
+        return text
+    for wrong, right in corrections.items():
+        text = text.replace(wrong, right)
+    return text
+
+
+def apply_corrections_to_words(words: list[dict], corrections: dict[str, str]) -> list[dict]:
+    """単語リストの text に対して置換辞書を適用する（タイムスタンプは保持）。"""
+    if not corrections:
+        return words
+    return [
+        {**w, "text": apply_corrections_to_text(w["text"], corrections)}
+        for w in words
+    ]
+
+
 def load_fillers(path: str | Path | None = None) -> set[str]:
     """日本語フィラー辞書をロードする。
 
@@ -55,8 +103,8 @@ def detect_filler_ranges(words: list[dict], fillers: set[str]) -> list[dict]:
 
 def detect_tempo_ranges(
     words: list[dict],
-    max_pause: float = 0.4,
-    target_pause: float = 0.2,
+    max_pause: float = 0.6,
+    target_pause: float = 0.3,
 ) -> list[dict]:
     """文末の長い間を target_pause まで短縮するための削除区間を作る。
 

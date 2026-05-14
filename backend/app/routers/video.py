@@ -2,6 +2,7 @@
 import uuid
 import shutil
 import asyncio
+import subprocess
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
@@ -9,24 +10,32 @@ from sse_starlette.sse import EventSourceResponse
 from app.models.schemas import (
     UploadResponse, ProcessRequest, ProcessResponse, ProgressEvent,
     JobStatus, JobResult, FontSize, SubtitlePosition, SubtitleColor,
+    TranscribeRequest, TranscribeResponse, TranscriptSegment,
 )
 from app.services.ffmpeg import (
     get_video_duration, extract_audio, detect_silence, cut_and_concat, burn_subtitles,
+    overlay_hook_text, overlay_cta_text, overlay_topic_numbers, mix_bgm,
 )
 from app.services.silence import compute_voice_segments
 from app.services.subtitle import (
-    transcribe_audio, transcribe_with_words, segments_to_srt, words_to_segments,
+    transcribe_audio, transcribe_with_words, segments_to_srt, segments_to_ass,
+    words_to_segments, apply_keyword_highlight,
 )
 from app.services.jump_cut import (
     detect_filler_ranges, detect_tempo_ranges, load_fillers, merge_ranges,
+    load_corrections, apply_corrections_to_words, apply_corrections_to_text,
 )
-from app.services.llm import detect_restatements
+from app.services.llm import (
+    detect_restatements, correct_transcript_segments, extract_keywords, generate_hook,
+    detect_topics, select_bgm_style,
+)
+from app.services.vad import detect_silence_silero
 
 router = APIRouter(prefix="/api", tags=["video"])
 
 TMP_DIR = Path("/app/tmp")
-MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
-MAX_DURATION = 180  # 3 minutes
+MAX_FILE_SIZE = 1024 * 1024 * 1024  # 1GB
+MAX_DURATION = 300  # 5 minutes
 ALLOWED_TYPES = {"video/mp4", "video/quicktime", "video/webm"}
 
 job_store: dict[str, dict] = {}
@@ -55,6 +64,53 @@ def _filter_words_by_segments(words: list[dict], segments: list[dict]) -> list[d
     return remapped
 
 
+def _remap_edited_segments(segments: list, voice_segments: list[dict]) -> list[dict]:
+    """編集済み字幕の元タイムスタンプを、カット後動画のタイムスタンプに変換する。
+
+    segments: list of {start, end, text} or pydantic EditedSegment
+    voice_segments: 有音区間（カット対象外）
+    """
+    if not voice_segments:
+        return []
+
+    # 元時刻 → カット後時刻のマッピングテーブル
+    cumulative = []  # (orig_start, orig_end, cut_offset)
+    offset = 0.0
+    for vs in voice_segments:
+        cumulative.append((vs["start"], vs["end"], offset))
+        offset += vs["end"] - vs["start"]
+    total_cut_dur = offset
+
+    def map_time(t: float) -> float:
+        """元時刻 t をカット後時刻に変換。カット範囲内は最寄りの境界に丸める。"""
+        for orig_s, orig_e, cut_off in cumulative:
+            if orig_s <= t <= orig_e:
+                return cut_off + (t - orig_s)
+        # カット範囲内 → 次の有音区間の先頭 or 直前の終端
+        if t < cumulative[0][0]:
+            return 0.0
+        for i, (orig_s, orig_e, cut_off) in enumerate(cumulative):
+            if t < orig_s:
+                return cut_off  # 次の voice segment の開始
+        return total_cut_dur
+
+    remapped: list[dict] = []
+    for seg in segments:
+        s_start = float(seg.start) if hasattr(seg, "start") else float(seg["start"])
+        s_end = float(seg.end) if hasattr(seg, "end") else float(seg["end"])
+        s_text = seg.text if hasattr(seg, "text") else seg["text"]
+        new_start = map_time(s_start)
+        new_end = map_time(s_end)
+        if new_end > new_start + 0.05:
+            remapped.append({
+                "start": new_start,
+                "end": new_end,
+                "text": s_text,
+                "words": [],
+            })
+    return remapped
+
+
 @router.post("/upload", response_model=UploadResponse)
 async def upload_video(file: UploadFile = File(...)):
     if file.content_type not in ALLOWED_TYPES:
@@ -71,7 +127,7 @@ async def upload_video(file: UploadFile = File(...)):
             file_size += len(chunk)
             if file_size > MAX_FILE_SIZE:
                 shutil.rmtree(job_dir)
-                raise HTTPException(400, "File too large (max 500MB)")
+                raise HTTPException(400, "File too large (max 1GB)")
             f.write(chunk)
 
     try:
@@ -92,6 +148,61 @@ async def upload_video(file: UploadFile = File(...)):
     )
 
 
+@router.post("/transcribe/{job_id}", response_model=TranscribeResponse)
+async def transcribe_preview(job_id: str, settings: TranscribeRequest):
+    """字幕プレビュー用エンドポイント。
+
+    Whisper + 辞書置換 + LLM校正のみ実行し、編集可能なセグメントを返す。
+    結果は job_store にキャッシュされ、後段の /process で再利用される。
+    """
+    job_dir = TMP_DIR / job_id
+    if not job_dir.exists():
+        raise HTTPException(404, "Job not found")
+
+    input_path = str(job_dir / "input.mp4")
+    audio_path = str(job_dir / "audio.wav")
+
+    if not Path(audio_path).exists():
+        extract_audio(input_path, audio_path)
+
+    words, _segs = transcribe_with_words(
+        audio_path, initial_prompt=settings.transcript_prompt or None,
+    )
+
+    corrections = load_corrections()
+    if corrections:
+        words = apply_corrections_to_words(words, corrections)
+
+    sub_segments = words_to_segments(words)
+
+    for seg in sub_segments:
+        seg["text"] = apply_corrections_to_text(seg["text"], corrections)
+
+    texts = [s["text"] for s in sub_segments]
+    corrected_texts = correct_transcript_segments(texts)
+    for seg, new_text in zip(sub_segments, corrected_texts):
+        seg["text"] = new_text
+
+    job_store[job_id] = {
+        **(job_store.get(job_id) or {}),
+        "transcript_words": words,
+        "transcript_segments": sub_segments,
+        "transcript_prompt": settings.transcript_prompt,
+    }
+
+    return TranscribeResponse(
+        job_id=job_id,
+        segments=[
+            TranscriptSegment(
+                start=round(s["start"], 3),
+                end=round(s["end"], 3),
+                text=s["text"],
+            )
+            for s in sub_segments
+        ],
+    )
+
+
 def _run_processing(job_id: str, settings: ProcessRequest):
     """Run video processing in background"""
     job = job_store[job_id]
@@ -104,9 +215,16 @@ def _run_processing(job_id: str, settings: ProcessRequest):
         audio_path = str(job_dir / "audio.wav")
         extract_audio(input_path, audio_path)
 
-        # Stage 2: Silence detection
+        # Stage 2: Silence detection (Silero VAD 優先、失敗時 ffmpeg にフォールバック)
         job.update({"stage": "silence_detect", "progress": 25, "message": "無音区間を解析中..."})
-        silences = detect_silence(audio_path, settings.silence_threshold, settings.min_silence_duration)
+        silences = detect_silence_silero(
+            audio_path,
+            min_silence_duration=settings.min_silence_duration,
+        )
+        if silences is None:
+            silences = detect_silence(
+                audio_path, settings.silence_threshold, settings.min_silence_duration,
+            )
         original_duration = get_video_duration(input_path)
 
         # Stage 2.5 / 3: AI Jump Cut（有効時）
@@ -115,13 +233,29 @@ def _run_processing(job_id: str, settings: ProcessRequest):
         extra_cuts: list[dict] = []
         jump_cut_notes: list[str] = []
 
+        cached = job_store.get(job_id) or {}
+        cached_words = cached.get("transcript_words") or []
+
         if settings.enable_jump_cut:
-            job.update({
-                "stage": "transcribe_for_cut",
-                "progress": 30,
-                "message": "AIで音声を解析中...",
-            })
-            words, pre_cut_segments = transcribe_with_words(audio_path)
+            if cached_words:
+                # プレビュー段階で生成済みの transcript を再利用
+                words = cached_words
+                pre_cut_segments = cached.get("transcript_segments") or []
+            else:
+                job.update({
+                    "stage": "transcribe_for_cut",
+                    "progress": 30,
+                    "message": "AIで音声を解析中...",
+                })
+                words, pre_cut_segments = transcribe_with_words(
+                    audio_path,
+                    initial_prompt=settings.transcript_prompt or None,
+                )
+
+                # 同音異義語の辞書置換（タイムスタンプは保持）
+                corrections = load_corrections()
+                if corrections:
+                    words = apply_corrections_to_words(words, corrections)
 
             job.update({
                 "stage": "jump_cut",
@@ -158,28 +292,165 @@ def _run_processing(job_id: str, settings: ProcessRequest):
         final_output = cut_output
 
         # Stage 5: Subtitles (optional)
+        edited_provided = bool(settings.edited_segments)
         if settings.enable_subtitles:
             job.update({"stage": "transcribe", "progress": 75, "message": "字幕を生成中..."})
             srt_path = str(job_dir / "subtitles.srt")
+            corrections = load_corrections()
 
-            if words:
+            if edited_provided:
+                # ユーザー編集字幕: 元時刻 → カット後時刻に変換
+                sub_segments = _remap_edited_segments(
+                    settings.edited_segments, voice_segments,
+                )
+            elif words:
                 remapped = _filter_words_by_segments(words, voice_segments)
                 sub_segments = words_to_segments(remapped)
-                Path(srt_path).write_text(segments_to_srt(sub_segments), encoding="utf-8")
             else:
+                # 字幕のみ有効: カット後動画から transcribe して segments を得る
                 cut_audio = str(job_dir / "cut_audio.wav")
                 extract_audio(cut_output, cut_audio)
-                transcribe_audio(cut_audio, srt_path)
+                _w, sub_segments = transcribe_with_words(
+                    cut_audio,
+                    initial_prompt=settings.transcript_prompt or None,
+                )
+
+            if not edited_provided:
+                # 辞書置換 → LLM校正（編集済みなら適用しない）
+                for seg in sub_segments:
+                    seg["text"] = apply_corrections_to_text(seg["text"], corrections)
+
+                texts = [s["text"] for s in sub_segments]
+                corrected_texts = correct_transcript_segments(texts)
+                for seg, new_text in zip(sub_segments, corrected_texts):
+                    seg["text"] = new_text
+
+            # キーワードハイライト（常時ON）— LLM でキーワード抽出
+            full_text = " ".join(s["text"] for s in sub_segments)
+            keywords = extract_keywords(full_text)
+
+            # バズモード時は ASS でモーション字幕、それ以外は SRT
+            has_word_data = any(s.get("words") for s in sub_segments)
+            if settings.enable_buzz_mode and has_word_data and not edited_provided:
+                ass_path = str(job_dir / "subtitles.ass")
+                vw = vh = 1080
+                try:
+                    probe_out = subprocess.run(
+                        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                         "-show_entries", "stream=width,height",
+                         "-of", "csv=p=0:s=,", input_path],
+                        capture_output=True, text=True, check=True,
+                    )
+                    parts = probe_out.stdout.strip().split(",")
+                    if len(parts) == 2:
+                        vw, vh = int(parts[0]), int(parts[1])
+                except Exception:
+                    pass
+                Path(ass_path).write_text(
+                    segments_to_ass(
+                        sub_segments,
+                        font_size=_font_size_to_px(settings.font_size),
+                        position=settings.subtitle_position.value,
+                        primary_color="#FFFFFF",
+                        karaoke_color="#FFFF66",
+                        keywords=keywords,
+                        keyword_color="#FFD700",
+                        video_width=vw,
+                        video_height=vh,
+                    ),
+                    encoding="utf-8",
+                )
+                subtitle_file = ass_path
+            else:
+                if keywords:
+                    for seg in sub_segments:
+                        seg["text"] = apply_keyword_highlight(seg["text"], keywords)
+                Path(srt_path).write_text(segments_to_srt(sub_segments), encoding="utf-8")
+                subtitle_file = srt_path
 
             job.update({"stage": "burn_subtitles", "progress": 88, "message": "字幕を動画に焼き込み中..."})
             subtitled_output = str(job_dir / "output.mp4")
             burn_subtitles(
-                cut_output, srt_path, subtitled_output,
+                cut_output, subtitle_file, subtitled_output,
                 font_size=_font_size_to_px(settings.font_size),
                 position=settings.subtitle_position.value,
                 color=settings.subtitle_color.value,
             )
             final_output = subtitled_output
+
+        # Stage 6: バズモード — 数字オーバーレイ・冒頭フック・CTA
+        if settings.enable_buzz_mode:
+            # 数字オーバーレイ（トピック分割が検出できれば）
+            if 'sub_segments' in locals() and sub_segments and len(sub_segments) >= 4:
+                job.update({"stage": "buzz_topics", "progress": 90, "message": "ポイントを抽出中..."})
+                texts_for_topics = [s["text"] for s in sub_segments]
+                topics_raw = detect_topics(texts_for_topics)
+                topics: list[dict] = []
+                for i, t in enumerate(topics_raw):
+                    seg_idx = t["start_seg"]
+                    if seg_idx >= len(sub_segments):
+                        continue
+                    start_time = sub_segments[seg_idx]["start"]
+                    if i + 1 < len(topics_raw):
+                        next_seg = topics_raw[i + 1]["start_seg"]
+                        end_time = sub_segments[min(next_seg, len(sub_segments) - 1)]["start"]
+                    else:
+                        end_time = sub_segments[-1]["end"]
+                    topics.append({
+                        "index": t["index"],
+                        "start": start_time,
+                        "end": end_time,
+                        "label": t["label"],
+                    })
+                if topics:
+                    topics_output = str(job_dir / "with_topics.mp4")
+                    overlay_topic_numbers(final_output, topics_output, topics)
+                    final_output = topics_output
+
+            # 冒頭フック
+            job.update({"stage": "buzz_hook", "progress": 93, "message": "冒頭フックを生成中..."})
+            hook_source_text = ""
+            if 'sub_segments' in locals() and sub_segments:
+                hook_source_text = " ".join(s["text"] for s in sub_segments)
+            elif words:
+                hook_source_text = " ".join(w["text"] for w in words)
+
+            hook_text = generate_hook(hook_source_text) if hook_source_text else ""
+            if hook_text:
+                hook_output = str(job_dir / "with_hook.mp4")
+                overlay_hook_text(final_output, hook_output, hook_text, duration=3.0)
+                final_output = hook_output
+            else:
+                jump_cut_notes.append("フック生成をスキップしました（LLM未設定または失敗）")
+
+            # CTA オーバーレイ（末尾3秒）
+            job.update({"stage": "buzz_cta", "progress": 96, "message": "CTAを追加中..."})
+            cta_text = "👇 保存して見返してね"
+            cta_output = str(job_dir / "with_cta.mp4")
+            overlay_cta_text(final_output, cta_output, cta_text, duration=3.0)
+            final_output = cta_output
+
+            # BGM 自動追加（ファイルが存在すれば）
+            job.update({"stage": "buzz_bgm", "progress": 98, "message": "BGMを追加中..."})
+            bgm_source_text = hook_source_text or " ".join(w["text"] for w in words[:200] if words)
+            bgm_style = select_bgm_style(bgm_source_text) if bgm_source_text else ""
+            if bgm_style:
+                bgm_dir = Path("/app/app/data/bgm")
+                bgm_file = None
+                for ext in (".mp3", ".m4a", ".wav"):
+                    candidate = bgm_dir / f"{bgm_style}{ext}"
+                    if candidate.exists():
+                        bgm_file = candidate
+                        break
+                if bgm_file:
+                    bgm_output = str(job_dir / "with_bgm.mp4")
+                    try:
+                        mix_bgm(final_output, str(bgm_file), bgm_output)
+                        final_output = bgm_output
+                    except Exception as e:
+                        jump_cut_notes.append(f"BGM合成失敗: {e}")
+                else:
+                    jump_cut_notes.append(f"BGMファイル未配置（{bgm_style}）")
 
         # Rename final output
         output_path = job_dir / "output.mp4"
@@ -216,7 +487,15 @@ async def process_video(job_id: str, settings: ProcessRequest, background_tasks:
     if not job_dir.exists():
         raise HTTPException(404, "Job not found")
 
+    # 重複起動防止: PROCESSING 状態なら新規起動しない
+    existing = job_store.get(job_id)
+    if existing and existing.get("status") == JobStatus.PROCESSING and existing.get("stage") not in (None, "", "init"):
+        return ProcessResponse(job_id=job_id, status=JobStatus.PROCESSING)
+
+    # transcript キャッシュは保持し、ジョブ状態だけリセット
+    cached = job_store.get(job_id) or {}
     job_store[job_id] = {
+        **{k: v for k, v in cached.items() if k.startswith("transcript_")},
         "status": JobStatus.PROCESSING,
         "stage": "init",
         "progress": 0,

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import shutil
 import time
 from pathlib import Path
@@ -7,13 +8,18 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import video, publish
 
 TMP_DIR = Path("/app/tmp")
 CLEANUP_INTERVAL = 300  # 5 minutes
-MAX_AGE = 3600  # 1 hour
+MAX_AGE = 86400  # 24 hours
 
 
 async def cleanup_old_jobs():
@@ -39,7 +45,7 @@ app = FastAPI(title="Reel Creator API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

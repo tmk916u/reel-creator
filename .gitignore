@@ -23,3 +23,8 @@ backend/.env
 credentials/
 **/credentials/
 **/service_account*.json
+
+# BGM files (user-provided, copyright)
+backend/app/data/bgm/*.mp3
+backend/app/data/bgm/*.wav
+backend/app/data/bgm/*.m4a

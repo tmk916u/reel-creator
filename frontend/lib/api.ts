@@ -8,11 +8,20 @@ export interface UploadResponse {
   file_size: number;
 }
 
+export interface TranscriptSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
 export interface ProcessSettings {
   silence_threshold: number;
   min_silence_duration: number;
   enable_subtitles: boolean;
   enable_jump_cut?: boolean;
+  enable_buzz_mode?: boolean;
+  transcript_prompt?: string;
+  edited_segments?: TranscriptSegment[];
   font_size: "small" | "medium" | "large";
   subtitle_position: "bottom" | "center";
   subtitle_color: "white" | "yellow";
@@ -49,6 +58,23 @@ export async function uploadVideo(file: File): Promise<UploadResponse> {
   }
 
   return res.json();
+}
+
+export async function transcribePreview(
+  jobId: string,
+  transcriptPrompt: string
+): Promise<TranscriptSegment[]> {
+  const res = await fetch(`${API_URL}/api/transcribe/${jobId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transcript_prompt: transcriptPrompt }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "字幕プレビュー失敗");
+  }
+  const data = await res.json();
+  return data.segments as TranscriptSegment[];
 }
 
 export async function startProcessing(

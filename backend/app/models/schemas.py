@@ -26,14 +26,38 @@ class SubtitleColor(str, Enum):
     YELLOW = "yellow"
 
 
+class EditedSegment(BaseModel):
+    start: float
+    end: float
+    text: str
+
+
 class ProcessRequest(BaseModel):
     silence_threshold: float = -30.0  # dB
     min_silence_duration: float = 0.5  # seconds
     enable_subtitles: bool = False
     enable_jump_cut: bool = False
+    enable_buzz_mode: bool = False  # 冒頭フック + モーション字幕
+    transcript_prompt: str = ""  # Whisperに渡す文脈（テーマ・専門用語）
     font_size: FontSize = FontSize.MEDIUM
     subtitle_position: SubtitlePosition = SubtitlePosition.BOTTOM
     subtitle_color: SubtitleColor = SubtitleColor.WHITE
+    edited_segments: list[EditedSegment] | None = None  # プレビュー編集後の字幕
+
+
+class TranscribeRequest(BaseModel):
+    transcript_prompt: str = ""
+
+
+class TranscriptSegment(BaseModel):
+    start: float
+    end: float
+    text: str
+
+
+class TranscribeResponse(BaseModel):
+    job_id: str
+    segments: list[TranscriptSegment]
 
 
 class UploadResponse(BaseModel):
