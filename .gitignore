@@ -16,6 +16,13 @@ frontend/.next/
 .vscode/
 .idea/
 
+# AI agent local configs
+.agent/
+.claude/
+.codex/
+.cursor/
+.gemini/
+
 # Environment / Secrets
 backend/.env
 
