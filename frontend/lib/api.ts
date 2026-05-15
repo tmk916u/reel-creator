@@ -110,8 +110,11 @@ export function subscribeProgress(
   };
 
   eventSource.onerror = () => {
-    onError(new Error("Connection lost"));
-    eventSource.close();
+    // CONNECTING(0)はブラウザが自動再接続中なのでエラー扱いしない。
+    // CLOSED(2)に遷移したときだけ呼び出し側に通知する。
+    if (eventSource.readyState === EventSource.CLOSED) {
+      onError(new Error("Connection lost"));
+    }
   };
 
   return () => eventSource.close();

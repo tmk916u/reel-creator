@@ -118,6 +118,35 @@ frontend/
   lib/api.ts              # API クライアント
 ```
 
+## コード改善候補（実装は次セッション）
+
+### asr.py セルフレビュー結果
+
+- **device 環境変数化**: 現在 `_load_reazonspeech_model()` / `_load_whisperx_*` / `_load_faster_whisper_model()` で `device="cpu"` をハードコード。`ASR_DEVICE=cpu|cuda|auto` 環境変数を追加し、GPU 環境でそのまま動くようにする。
+- **メモリ管理**: `lru_cache` でモデルを保持し続けるため、複数バックエンドのモデルが同時にロードされた場合 4-6GB 占有する可能性。ジョブ完了後の cache クリア機構は今のところ不要だが、メモリ逼迫したら検討。
+- **WhisperX safe_globals パッチ**: torch 2.6+ の `weights_only=True` 対策で omegaconf 系を allow リストに追加しているが、try/except で吸収しているため `WhisperX failed, falling back` のログが出れば自然にフォールバック。問題なし。
+
+### /api/transcribe → /api/process の cache 連携（検証済み）
+
+`routers/video.py` を読んだ結果、**通常フロー**（プレビュー → 処理）で `transcribe_with_words` は **1 回しか実行されない**:
+
+1. `POST /api/transcribe`: `job_store[job_id]["transcript_words"]` と `["transcript_segments"]` に保存（line 211-212）。
+2. `POST /api/process`:
+   - `cached_words = cached.get("transcript_words")` が真なら **transcribe スキップ**（line 277-283）。
+   - 字幕生成も `elif words:` ブランチで cache 経由（line 363-365）→ こちらも transcribe しない。
+
+**transcribe が 2 回走るケース** は次のレアパスのみ:
+- ジャンプカット OFF かつ字幕 ON で、`/api/transcribe` を経由せず直接 `/api/process` を叩いた場合（line 367-373 の `else` ブランチ）。
+- UI 経由なら基本起きない。CLI / 直接 API 呼び出し時の注意点。
+
+### SSE 切断について（解決）
+
+ブラウザの `ERR_INCOMPLETE_CHUNKED_ENCODING` は、長時間 chunked transfer 中に Docker for Mac の VPN-kit や Chrome のアイドル監視で接続が切られたもの。`_run_processing` は `background_task` なので **処理は継続中**。`frontend/lib/api.ts` の `onerror` を `readyState === CLOSED` チェック付きに変更済み（EventSource の自動再接続を活かす）。さらに堅牢にするなら `EventSourceResponse(event_generator(), ping=15)` を追加する余地あり（次セッション）。
+
+### 04:04 以降のバックエンドログ沈黙の正体
+
+`ReazonSpeech: 26 segments, 372 subwords, 223.8s` → `VAD` → `LLM` まで来た後の長い沈黙は **ffmpeg の cut_and_concat / apply_pipeline_combined 実行中**。3 分動画では ffmpeg が CPU で 5-10 分かかる可能性。`ReazonSpeech 自体は ~3.7 分（初回モデル DL 込み）で完了済み`。
+
 ## 次セッション開始時の最初のプロンプト案
 
 ```
