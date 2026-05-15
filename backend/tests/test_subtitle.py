@@ -41,16 +41,17 @@ def test_words_to_segments_punctuation_split():
 
 
 def test_words_to_segments_gap_split():
-    """長い無音で分割する"""
+    """長い無音で分割する（短いフラグメント統合が走らない長さで検証）"""
     words = [
-        {"start": 0.0, "end": 0.5, "text": "あ"},
-        {"start": 0.5, "end": 1.0, "text": "い"},
-        {"start": 2.0, "end": 2.5, "text": "う"},  # 1秒のギャップ
+        {"start": 0.0, "end": 0.3, "text": "あいうえお"},
+        {"start": 0.3, "end": 0.6, "text": "かきくけこ"},
+        {"start": 3.0, "end": 3.3, "text": "さしすせそ"},
+        {"start": 3.3, "end": 3.6, "text": "たちつてと"},
     ]
     segments = words_to_segments(words, max_gap=0.6, lead_time=0, tail_time=0)
     assert len(segments) == 2
-    assert segments[0]["text"] == "あい"
-    assert segments[1]["text"] == "う"
+    assert segments[0]["text"] == "あいうえおかきくけこ"
+    assert segments[1]["text"] == "さしすせそたちつてと"
 
 
 def test_words_to_segments_lead_tail_padding():

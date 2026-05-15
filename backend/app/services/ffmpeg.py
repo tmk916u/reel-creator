@@ -61,7 +61,7 @@ def cut_and_concat(
     video_path: str,
     segments: list[dict],
     output_path: str,
-    audio_fade: float = 0.04,
+    audio_fade: float = 0.08,
 ) -> str:
     """有音セグメントをカットして結合。
 

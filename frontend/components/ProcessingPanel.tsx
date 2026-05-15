@@ -18,7 +18,7 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     enable_jump_cut: true,
     enable_buzz_mode: true,
     silence_threshold: -30,
-    min_silence_duration: 0.5,
+    min_silence_duration: 0.3,
     font_size: "medium",
     subtitle_position: "bottom",
     subtitle_color: "white",
@@ -48,7 +48,7 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
 export default function ProcessingPanel({ duration, previewUrl, onStart }: Props) {
   const [settings, setSettings] = useState<ProcessSettings>({
     silence_threshold: -30,
-    min_silence_duration: 0.5,
+    min_silence_duration: 0.3,
     enable_subtitles: false,
     enable_jump_cut: false,
     enable_buzz_mode: false,

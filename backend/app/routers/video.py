@@ -31,7 +31,7 @@ from app.services.llm import (
     detect_restatements, correct_transcript_segments, extract_keywords, generate_hook,
     detect_topics, select_bgm_style, generate_captions, predict_buzz_score,
 )
-from app.services.vad import detect_silence_silero
+from app.services.vad import detect_silence_silero, snap_silences_to_word_boundaries
 
 router = APIRouter(prefix="/api", tags=["video"])
 
@@ -175,6 +175,27 @@ async def transcribe_preview(job_id: str, settings: TranscribeRequest):
     if corrections:
         words = apply_corrections_to_words(words, corrections)
 
+    # 最終動画でカットされる区間のワードを除外し、単語境界でカットされるよう補正
+    try:
+        total_duration = get_video_duration(input_path)
+        silences = detect_silence_silero(audio_path, min_silence_duration=0.5)
+        if silences is None:
+            silences = detect_silence(audio_path, -30.0, 0.5)
+        # 単語の途中で切らないようにスナップ
+        silences = snap_silences_to_word_boundaries(silences, words)
+        voice_segs = compute_voice_segments(silences, total_duration)
+        # 各 voice segment に**完全に**含まれるワードだけ残す（元時刻のまま）
+        kept_words: list[dict] = []
+        for w in words:
+            for vs in voice_segs:
+                if w["start"] >= vs["start"] and w["end"] <= vs["end"]:
+                    kept_words.append(w)
+                    break
+        if kept_words:
+            words = kept_words
+    except Exception:
+        pass
+
     sub_segments = words_to_segments(words)
 
     for seg in sub_segments:
@@ -288,6 +309,12 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             if not restatement_cuts and words:
                 jump_cut_notes.append("言い直し検出はスキップしました（LLM未設定または失敗）")
             extra_cuts = merge_ranges(filler_cuts + tempo_cuts + restatement_cuts)
+
+        # 単語境界スナップ: silence と extra_cuts が単語の中で切らないよう補正
+        if words:
+            silences = snap_silences_to_word_boundaries(silences, words)
+            if extra_cuts:
+                extra_cuts = snap_silences_to_word_boundaries(extra_cuts, words)
 
         voice_segments = compute_voice_segments(
             silences, original_duration, extra_cuts=extra_cuts,

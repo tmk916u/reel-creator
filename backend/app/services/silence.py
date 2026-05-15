@@ -5,9 +5,9 @@ from app.services.jump_cut import merge_ranges
 def compute_voice_segments(
     silences: list[dict],
     total_duration: float,
-    padding: float = 0.05,
+    padding: float = 0.04,
     extra_cuts: list[dict] | None = None,
-    min_cut_length: float = 0.08,
+    min_cut_length: float = 0.15,
 ) -> list[dict]:
     """削除区間（無音 + 追加カット）から有音区間リストを算出する。
 

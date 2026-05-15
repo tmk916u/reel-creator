@@ -34,7 +34,7 @@ class EditedSegment(BaseModel):
 
 class ProcessRequest(BaseModel):
     silence_threshold: float = -30.0  # dB
-    min_silence_duration: float = 0.5  # seconds
+    min_silence_duration: float = 0.3  # seconds
     enable_subtitles: bool = False
     enable_jump_cut: bool = False
     enable_buzz_mode: bool = False  # 冒頭フック + モーション字幕

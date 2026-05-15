@@ -30,8 +30,8 @@ def words_to_segments(
     words: list[dict],
     max_chars: int = 18,
     max_gap: float = 0.6,
-    lead_time: float = 0.12,
-    tail_time: float = 0.15,
+    lead_time: float = 0.05,
+    tail_time: float = 0.20,
 ) -> list[dict]:
     """単語リストを字幕表示用のセグメントへグループ化する。
 
@@ -75,6 +75,11 @@ def words_to_segments(
     if current_words:
         flush()
 
+    # 隣接セグメント間の重複テキスト除去（Whisperチャンク境界での再記述を解消）
+    segments = _dedupe_adjacent_overlaps(segments)
+    # 短すぎるセグメントを次の/前のセグメントに統合（ぶつ切り感の解消）
+    segments = _merge_short_segments(segments, min_dur=0.6, max_chars=max(max_chars, 24))
+
     # 視認性向上: lead_time だけ前倒し / tail_time だけ後ろに伸ばす
     # ただし隣のセグメントと被らないよう調整
     for i, seg in enumerate(segments):
@@ -92,6 +97,105 @@ def words_to_segments(
         seg["end"] = max(seg["end"], candidate_end)
 
     return segments
+
+
+def _dedupe_adjacent_overlaps(segments: list[dict]) -> list[dict]:
+    """隣接セグメント間の重複テキストを除去する（3パターン）：
+    1. 後段の先頭が前段の末尾と一致 → 後段から先頭の重複を除去
+    2. 後段全体が前段の部分文字列 → 後段を破棄
+    3. 後段の前半 50%以上が前段に含まれる → 後段を破棄
+    """
+    if len(segments) < 2:
+        return segments
+    out = [dict(segments[0])]
+    for seg in segments[1:]:
+        prev = out[-1]
+        prev_text = prev.get("text", "").strip()
+        cur_text = seg.get("text", "").strip()
+        if not cur_text:
+            continue
+
+        # パターン2: 後段全体が前段に含まれる
+        if len(cur_text) >= 3 and cur_text in prev_text:
+            continue
+
+        # パターン3: 後段の先頭半分以上が前段に含まれる場合は後段破棄
+        half = max(3, len(cur_text) // 2)
+        if half >= 3 and cur_text[:half] in prev_text:
+            # 重複部分のみ後段から取り除いて残りを採用、空なら破棄
+            remaining = cur_text[half:].strip()
+            if len(remaining) < 3:
+                continue
+            new_seg = dict(seg)
+            new_seg["text"] = remaining
+            out.append(new_seg)
+            continue
+
+        # パターン1: 末尾と先頭の最長一致（2〜20文字）
+        max_len = min(len(prev_text), len(cur_text), 20)
+        overlap = 0
+        for i in range(max_len, 1, -1):
+            if prev_text.endswith(cur_text[:i]):
+                overlap = i
+                break
+        if overlap > 0:
+            new_text = cur_text[overlap:].strip()
+            if not new_text:
+                continue
+            new_seg = dict(seg)
+            new_seg["text"] = new_text
+            out.append(new_seg)
+        else:
+            out.append(dict(seg))
+    return out
+
+
+def _merge_short_segments(
+    segments: list[dict],
+    min_dur: float = 0.6,
+    max_chars: int = 24,
+) -> list[dict]:
+    """短すぎる/フラグメント的なセグメントを隣のセグメントに統合する。
+
+    3パターンで統合判定:
+    1. 両方が短時間 (<min_dur) + 合計が短い + 近い → 統合
+    2. どちらかが極端に短い文字数 (<5文字) + 合計が読める長さ + 大きすぎないギャップ → 統合
+    3. 前段が句読点で終わっている場合は統合しない（文の区切り尊重）
+    """
+    if len(segments) < 2:
+        return segments
+    out: list[dict] = [dict(segments[0])]
+    for seg in segments[1:]:
+        prev = out[-1]
+        prev_text = prev.get("text", "").strip()
+        cur_text = seg.get("text", "").strip()
+        prev_dur = prev["end"] - prev["start"]
+        cur_dur = seg["end"] - seg["start"]
+        combined_len = len(prev_text) + len(cur_text)
+        gap = seg["start"] - prev["end"]
+
+        # 前段が句読点で終わっていれば文の終わり → 統合しない
+        prev_ends_with_punct = prev_text and prev_text[-1] in "、。！？!?."
+
+        either_tiny = len(prev_text) < 5 or len(cur_text) < 5
+        both_short = prev_dur < min_dur and cur_dur < min_dur
+
+        should_merge = False
+        if not prev_ends_with_punct:
+            if both_short and combined_len <= max_chars and gap < 0.8:
+                should_merge = True
+            elif either_tiny and combined_len <= 30 and gap < 3.0:
+                # フラグメント（1〜4文字）は3秒以内のギャップなら統合
+                should_merge = True
+
+        if should_merge:
+            prev["end"] = seg["end"]
+            prev["text"] = (prev_text + cur_text).strip()
+            if "words" in prev or "words" in seg:
+                prev["words"] = list(prev.get("words", [])) + list(seg.get("words", []))
+        else:
+            out.append(dict(seg))
+    return out
 
 
 def _ass_time(seconds: float) -> str:
@@ -288,8 +392,11 @@ def _transcribe_with_whisperx(
             from omegaconf.dictconfig import DictConfig
             from omegaconf.base import ContainerMetadata, Metadata
             from omegaconf.nodes import AnyNode
+            import typing
             torch.serialization.add_safe_globals([
                 ListConfig, DictConfig, ContainerMetadata, Metadata, AnyNode,
+                typing.Any, typing.List, typing.Dict, typing.Tuple, typing.Optional,
+                typing.Union, typing.Sequence, typing.Mapping,
             ])
         except Exception as patch_e:
             logger.warning("WhisperX safe-globals patch skipped: %s", patch_e)
