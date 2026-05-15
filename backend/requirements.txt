@@ -3,7 +3,7 @@ uvicorn[standard]==0.34.0
 python-multipart==0.0.20
 sse-starlette==2.2.1
 faster-whisper==1.1.1
-pydantic==2.10.5
+pydantic>=2.10.6,<3.0.0
 requests
 gspread==6.1.4
 google-auth==2.38.0
@@ -14,3 +14,4 @@ whisperx==3.4.2
 silero-vad==5.1.2
 torch==2.6.0
 torchaudio==2.6.0
+reazonspeech-nemo-asr @ git+https://github.com/reazon-research/ReazonSpeech.git@master#subdirectory=pkg/nemo-asr

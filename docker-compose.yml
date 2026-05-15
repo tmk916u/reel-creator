@@ -6,9 +6,11 @@ services:
     volumes:
       - ./backend:/app
       - backend-tmp:/app/tmp
+      - hf-cache:/root/.cache/huggingface
     env_file: ./backend/.env
     environment:
       - PYTHONUNBUFFERED=1
+      - HF_HOME=/root/.cache/huggingface
 
   frontend:
     build: ./frontend
@@ -24,3 +26,4 @@ services:
 
 volumes:
   backend-tmp:
+  hf-cache:

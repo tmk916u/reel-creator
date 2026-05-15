@@ -1,0 +1,164 @@
+# backend/tests/test_asr.py
+from types import SimpleNamespace
+
+import pytest
+
+from app.services import asr
+
+
+# === subword → word 変換 ===
+
+def test_reazonspeech_subword_to_word_conversion():
+    """隣接 subword の差で word duration を構築する。末尾は segment.end_seconds。"""
+    result = SimpleNamespace(
+        subwords=[
+            SimpleNamespace(seconds=0.0, token="今"),
+            SimpleNamespace(seconds=0.3, token="日"),
+            SimpleNamespace(seconds=0.6, token="は"),
+        ],
+        segments=[
+            SimpleNamespace(start_seconds=0.0, end_seconds=1.0, text="今日は"),
+        ],
+    )
+    words, segments = asr._reazonspeech_result_to_words_segments(result)
+    assert len(words) == 3
+    assert words[0] == {"start": 0.0, "end": 0.3, "text": "今"}
+    assert words[1] == {"start": 0.3, "end": 0.6, "text": "日"}
+    assert words[2] == {"start": 0.6, "end": 1.0, "text": "は"}
+    assert segments == [{"start": 0.0, "end": 1.0, "text": "今日は"}]
+
+
+def test_reazonspeech_strips_bpe_boundary_marker():
+    """BPE 境界マーカー (U+2581) を除去する。"""
+    result = SimpleNamespace(
+        subwords=[
+            SimpleNamespace(seconds=0.0, token="▁今日"),
+            SimpleNamespace(seconds=0.5, token="は"),
+        ],
+        segments=[SimpleNamespace(start_seconds=0.0, end_seconds=1.0, text="今日は")],
+    )
+    words, _ = asr._reazonspeech_result_to_words_segments(result)
+    assert [w["text"] for w in words] == ["今日", "は"]
+
+
+def test_reazonspeech_handles_empty_result():
+    """subwords も segments も空なら空配列を返す。"""
+    result = SimpleNamespace(subwords=[], segments=[])
+    words, segments = asr._reazonspeech_result_to_words_segments(result)
+    assert words == []
+    assert segments == []
+
+
+def test_reazonspeech_last_subword_falls_back_when_no_segments():
+    """segments が空でも、末尾 subword は単一点 +0.3s で end を埋める。"""
+    result = SimpleNamespace(
+        subwords=[
+            SimpleNamespace(seconds=0.0, token="あ"),
+            SimpleNamespace(seconds=0.4, token="い"),
+        ],
+        segments=[],
+    )
+    words, _ = asr._reazonspeech_result_to_words_segments(result)
+    assert words[0]["end"] == 0.4
+    assert words[1]["start"] == 0.4
+    assert words[1]["end"] == pytest.approx(0.7)
+
+
+def test_reazonspeech_zero_duration_subword_extends_to_min():
+    """end <= start のケースで最小 duration を保証する。"""
+    result = SimpleNamespace(
+        subwords=[
+            SimpleNamespace(seconds=0.5, token="あ"),
+            SimpleNamespace(seconds=0.5, token="い"),
+        ],
+        segments=[SimpleNamespace(start_seconds=0.0, end_seconds=0.5, text="あい")],
+    )
+    words, _ = asr._reazonspeech_result_to_words_segments(result)
+    assert words[0]["end"] > words[0]["start"]
+    assert words[1]["end"] > words[1]["start"]
+
+
+# === 3 段フォールバック ===
+
+def test_fallback_reazonspeech_success_skips_others(monkeypatch):
+    monkeypatch.delenv("ASR_BACKEND", raising=False)
+    calls: list[str] = []
+    monkeypatch.setattr(asr, "_transcribe_with_reazonspeech",
+                        lambda p: (calls.append("rs") or ([{"start": 0, "end": 1, "text": "x"}], [])))
+    monkeypatch.setattr(asr, "_transcribe_with_whisperx",
+                        lambda *a, **k: calls.append("wx") or None)
+    monkeypatch.setattr(asr, "_transcribe_with_faster_whisper",
+                        lambda *a, **k: calls.append("fw") or ([], []))
+
+    words, segs = asr.transcribe_with_words("/tmp/x.wav")
+    assert calls == ["rs"]
+    assert words == [{"start": 0, "end": 1, "text": "x"}]
+
+
+def test_fallback_reazonspeech_fails_to_whisperx(monkeypatch):
+    monkeypatch.delenv("ASR_BACKEND", raising=False)
+    calls: list[str] = []
+    monkeypatch.setattr(asr, "_transcribe_with_reazonspeech",
+                        lambda p: calls.append("rs") or None)
+    monkeypatch.setattr(asr, "_transcribe_with_whisperx",
+                        lambda *a, **k: (calls.append("wx") or ([{"start": 0, "end": 1, "text": "wx"}], [])))
+    monkeypatch.setattr(asr, "_transcribe_with_faster_whisper",
+                        lambda *a, **k: calls.append("fw") or ([], []))
+
+    words, _ = asr.transcribe_with_words("/tmp/x.wav")
+    assert calls == ["rs", "wx"]
+    assert words[0]["text"] == "wx"
+
+
+def test_fallback_all_through_to_faster_whisper(monkeypatch):
+    monkeypatch.delenv("ASR_BACKEND", raising=False)
+    calls: list[str] = []
+    monkeypatch.setattr(asr, "_transcribe_with_reazonspeech",
+                        lambda p: calls.append("rs") or None)
+    monkeypatch.setattr(asr, "_transcribe_with_whisperx",
+                        lambda *a, **k: calls.append("wx") or None)
+    monkeypatch.setattr(asr, "_transcribe_with_faster_whisper",
+                        lambda *a, **k: (calls.append("fw") or ([{"start": 0, "end": 1, "text": "fw"}], [])))
+
+    words, _ = asr.transcribe_with_words("/tmp/x.wav")
+    assert calls == ["rs", "wx", "fw"]
+    assert words[0]["text"] == "fw"
+
+
+def test_force_backend_reazonspeech_raises_when_unavailable(monkeypatch):
+    monkeypatch.setenv("ASR_BACKEND", "reazonspeech")
+    monkeypatch.setattr(asr, "_transcribe_with_reazonspeech", lambda p: None)
+    with pytest.raises(RuntimeError, match="reazonspeech"):
+        asr.transcribe_with_words("/tmp/x.wav")
+
+
+def test_force_backend_whisperx_skips_reazonspeech(monkeypatch):
+    monkeypatch.setenv("ASR_BACKEND", "whisperx")
+    calls: list[str] = []
+    monkeypatch.setattr(asr, "_transcribe_with_reazonspeech",
+                        lambda p: calls.append("rs") or ([], []))
+    monkeypatch.setattr(asr, "_transcribe_with_whisperx",
+                        lambda *a, **k: (calls.append("wx") or ([{"start": 0, "end": 1, "text": "wx"}], [])))
+
+    asr.transcribe_with_words("/tmp/x.wav")
+    assert calls == ["wx"]
+
+
+def test_force_backend_faster_whisper_skips_others(monkeypatch):
+    monkeypatch.setenv("ASR_BACKEND", "faster-whisper")
+    calls: list[str] = []
+    monkeypatch.setattr(asr, "_transcribe_with_reazonspeech",
+                        lambda p: calls.append("rs") or ([], []))
+    monkeypatch.setattr(asr, "_transcribe_with_whisperx",
+                        lambda *a, **k: calls.append("wx") or ([], []))
+    monkeypatch.setattr(asr, "_transcribe_with_faster_whisper",
+                        lambda *a, **k: (calls.append("fw") or ([{"start": 0, "end": 1, "text": "fw"}], [])))
+
+    asr.transcribe_with_words("/tmp/x.wav")
+    assert calls == ["fw"]
+
+
+def test_subtitle_module_reexports_transcribe_with_words():
+    """後方互換: from app.services.subtitle import transcribe_with_words が動く。"""
+    from app.services.subtitle import transcribe_with_words as tww
+    assert tww is asr.transcribe_with_words
