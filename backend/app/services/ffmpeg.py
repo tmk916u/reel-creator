@@ -19,17 +19,27 @@ def get_video_duration(filepath: str) -> float:
     return float(data["format"]["duration"])
 
 
-def extract_audio(video_path: str, output_path: str) -> str:
-    """動画から音声をWAVで抽出"""
-    cmd = [
-        "ffmpeg", "-y", "-i", video_path,
-        "-vn", "-acodec", "pcm_s16le",
+def extract_audio(video_path: str, output_path: str, preprocess: bool = True) -> str:
+    """動画から音声を WAV で抽出する（既定で前処理あり）。
+
+    preprocess=True の場合、ffmpeg の audio filter で以下を適用:
+    - afftdn (FFT ベースのノイズ除去): ジム BGM や環境音の定常ノイズを軽減
+    - dynaudnorm (動的音量正規化): 自撮りの声量ムラを平滑化
+    これにより ASR (ReazonSpeech/WhisperX) の認識精度が安定する。
+    """
+    cmd = ["ffmpeg", "-y", "-i", video_path, "-vn"]
+    if preprocess:
+        # nr=12: 中程度の削減（声を潰さず BGM を軽減）
+        # dynaudnorm p=0.95 f=200: 200ms フレームで動的正規化、ピーク95%
+        cmd += ["-af", "afftdn=nr=12,dynaudnorm=p=0.95:f=200"]
+    cmd += [
+        "-acodec", "pcm_s16le",
         "-ar", "16000", "-ac", "1",
         output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg audio extraction failed: {result.stderr}")
+        raise RuntimeError(f"ffmpeg audio extraction failed: {result.stderr[-500:]}")
     return output_path
 
 

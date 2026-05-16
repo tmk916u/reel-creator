@@ -31,6 +31,12 @@ _SYSTEM_PROMPT = """あなたは動画編集の冗長削除アシスタントで
 3. **噛み・言いかけ**: 「整体院、いや整体を」のような断片
 4. **冗長な反復**: 同じ単語/フレーズを3回以上連続している箇所の重複部分
 
+**特に注意（自撮り動画の典型パターン）:**
+- スマホ自撮りでは「前半で要点を話す → 中盤で詳細 → **後半で再度同じ要点をまとめる**」構成が多い。
+  後半の「まとめパート」が前半の言い直しになっていたら、まとめ側を削除候補に。
+- 「言い直し」は前半削除、「2回目のまとめ」は後半削除、という区別を意識する。
+- 動画の前半 30% と後半 30% で同じトピックが現れた場合、後半を疑う。
+
 **対象外:**
 - フィラー（「えーっと」「あのー」）は別途処理されるので無視
 - 強調のための意図的な反復（例:「絶対、絶対大事です」）は保護
@@ -222,6 +228,7 @@ def correct_transcript_segments(segments: list[str]) -> list[str]:
     result = list(segments)
     applied = 0
     rejected = 0
+    rejected_indices: list[int] = []
     for item in parsed.corrections:
         if not (0 <= item.index < len(result)):
             rejected += 1
@@ -234,6 +241,7 @@ def correct_transcript_segments(segments: list[str]) -> list[str]:
         # 文字数が元の 2倍超 / 10文字以上長い場合は LLM がセグメントを統合した可能性が高いので破棄
         if len(new_text) > max(int(len(original) * 2.0), len(original) + 10):
             rejected += 1
+            rejected_indices.append(item.index)
             logger.warning(
                 "LLM correction rejected (too long): idx=%d orig=%d new=%d",
                 item.index, len(original), len(new_text),
@@ -241,11 +249,52 @@ def correct_transcript_segments(segments: list[str]) -> list[str]:
             continue
         result[item.index] = new_text
         applied += 1
+
+    # rejected を「控えめ校正」プロンプトで再試行（誤字のみ、意訳禁止）
+    retry_applied = 0
+    if rejected_indices:
+        retry_segs = [(i, segments[i]) for i in rejected_indices]
+        retry_user = "\n".join(f"[{n}] {s}" for n, (_, s) in enumerate(retry_segs))
+        try:
+            if provider == "openai":
+                raw2 = _call_openai(retry_user, system_prompt=_CORRECTION_RETRY_PROMPT)
+            else:
+                raw2 = _call_anthropic(retry_user, system_prompt=_CORRECTION_RETRY_PROMPT)
+            payload2 = _extract_json(raw2)
+            parsed2 = _CorrectionsResponse.model_validate(payload2)
+            for it in parsed2.corrections:
+                if not (0 <= it.index < len(retry_segs)):
+                    continue
+                orig_idx, original = retry_segs[it.index]
+                new_text = it.text.strip()
+                if not new_text:
+                    continue
+                # 控えめモードでは元の長さ +5 文字以内のみ採用
+                if len(new_text) > len(original) + 5:
+                    continue
+                result[orig_idx] = new_text
+                retry_applied += 1
+        except Exception as e:
+            logger.warning("LLM transcript correction retry failed: %s", e)
+
     logger.info(
-        "LLM transcript correction: %d applied, %d rejected, %d total",
-        applied, rejected, len(segments),
+        "LLM transcript correction: %d applied, %d rejected, %d retry-applied, %d total",
+        applied, rejected, retry_applied, len(segments),
     )
     return result
+
+
+_CORRECTION_RETRY_PROMPT = """あなたは日本語字幕の控えめな校正アシスタントです。
+入力は番号付きの短い字幕セグメント。前回の校正で「長すぎる」と却下された分の再校正です。
+**意訳・統合・要約は禁止**。元の意味・長さをほぼ維持したまま、誤字脱字と不自然な助詞のみ修正してください。
+
+ルール:
+- 元の長さ +5 文字以内に収める（超えたら出力しない）
+- セグメントの統合・分割は禁止
+- 隣のセグメントから単語を移動しない
+- 確信のある修正だけ返す（修正不要なら出力に含めない）
+
+出力 JSON: {"corrections": [{"index": 0, "text": "..."}, ...]}"""
 
 
 _KEYWORDS_SYSTEM_PROMPT = """あなたは動画コンテンツのキーワード抽出アシスタントです。

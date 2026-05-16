@@ -81,8 +81,8 @@ export default function Home() {
     async (settings: ProcessSettings) => {
       setError(null);
 
-      // 字幕が無効なら従来通り即実行
-      if (!settings.enable_subtitles) {
+      // 字幕が無効、または量産モード(skip_preview)なら即実行
+      if (!settings.enable_subtitles || settings.skip_preview) {
         await runProcessing(settings);
         return;
       }

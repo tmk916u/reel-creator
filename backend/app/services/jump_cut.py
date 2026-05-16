@@ -134,9 +134,9 @@ def detect_tempo_ranges(
 
 def detect_redundant_speech(
     words: list[dict],
-    window_words: int = 12,
-    similarity_threshold: float = 0.7,
-    min_gap_seconds: float = 5.0,
+    window_words: int = 10,
+    similarity_threshold: float = 0.6,
+    min_gap_seconds: float = 3.0,
 ) -> list[dict]:
     """連続する word チャンク同士のテキスト類似度を見て、繰り返しの 2 回目を
     削除候補にする（LLM の detect_restatements が見逃した重複の機械的補強）。

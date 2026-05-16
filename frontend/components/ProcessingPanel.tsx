@@ -49,6 +49,7 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     tempo_max_pause: 0.35,
     tempo_target_pause: 0.15,
     subtitle_max_chars: 10,
+    skip_preview: true,  // 量産用: 字幕プレビューを飛ばす
     font_size: "large",
     subtitle_position: "bottom",
     subtitle_color: "yellow",
@@ -254,6 +255,25 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
           <p className="text-xs text-gray-500 mt-1">
             AIジャンプカット ON 時のみ有効
           </p>
+        </div>
+
+        {/* 量産モード: 字幕プレビューをスキップ */}
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-300">⚡ 量産モード(字幕プレビューを飛ばす)</span>
+          <button
+            onClick={() =>
+              setSettings((s) => ({ ...s, skip_preview: !s.skip_preview }))
+            }
+            className={`relative w-12 h-6 rounded-full transition-colors ${
+              settings.skip_preview ? "bg-pink-500" : "bg-gray-600"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                settings.skip_preview ? "translate-x-6" : ""
+              }`}
+            />
+          </button>
         </div>
 
         {/* 字幕の最大文字数 */}

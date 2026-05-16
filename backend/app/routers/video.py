@@ -378,22 +378,33 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             corrections = load_corrections()
 
             if edited_provided:
-                # ユーザー編集字幕: 元時刻 → カット後時刻に変換
+                # 互換パス: ユーザー編集字幕は元時刻 → カット後時刻に変換
+                # （境界跨ぎで時刻がずれる可能性あり。編集なしを推奨）
                 sub_segments = _remap_edited_segments(
                     settings.edited_segments, voice_segments,
                 )
-            elif words:
-                remapped = _filter_words_by_segments(words, voice_segments)
-                sub_segments = words_to_segments(remapped, max_chars=settings.subtitle_max_chars)
             else:
-                # 字幕のみ有効: カット後動画から transcribe して segments を得る
+                # 標準パス: cut.mp4 を再 transcribe → words がはじめからカット後時刻
+                # （元時刻からの変換が不要になり、字幕のズレが構造的に発生しない）
+                job.update({
+                    "stage": "transcribe",
+                    "progress": 78,
+                    "message": "カット後の字幕を生成中...",
+                })
                 cut_audio = str(job_dir / "cut_audio.wav")
                 extract_audio(cut_output, cut_audio)
-                _w, sub_segments = transcribe_with_words(
+                words_cut, segs_cut = transcribe_with_words(
                     cut_audio,
                     initial_prompt=settings.transcript_prompt or None,
                 )
-                sub_segments = words_to_segments(_w, max_chars=settings.subtitle_max_chars) if _w else sub_segments
+                if corrections and words_cut:
+                    words_cut = apply_corrections_to_words(words_cut, corrections)
+                if words_cut:
+                    sub_segments = words_to_segments(
+                        words_cut, max_chars=settings.subtitle_max_chars,
+                    )
+                else:
+                    sub_segments = segs_cut
 
             if not edited_provided:
                 # 辞書置換 → LLM校正（編集済みなら適用しない）
