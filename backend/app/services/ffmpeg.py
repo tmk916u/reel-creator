@@ -57,6 +57,44 @@ def detect_silence(audio_path: str, threshold: float = -30.0, min_duration: floa
     return silences
 
 
+def _build_cut_concat_filter(segments: list[dict], audio_fade: float = 0.08) -> str:
+    """cut_and_concat 用の filter_complex 文字列を組み立てる。
+
+    各セグメントの音声に先頭・末尾フェードを掛け（境界のクリック軽減）、
+    最後に concat フィルタで結合する。seg_dur < 3*audio_fade のときは
+    フェード長を dur/3 にクランプする。seg_dur=0 はフェードなし。
+    """
+    parts: list[str] = []
+    concat_labels: list[str] = []
+    for i, seg in enumerate(segments):
+        start = float(seg["start"])
+        end = float(seg["end"])
+        dur = max(0.0, end - start)
+        fade_d = min(audio_fade, dur / 3) if dur > 0 else 0.0
+        fade_out_st = max(0.0, dur - fade_d)
+
+        parts.append(
+            f"[0:v]trim=start={start:.3f}:end={end:.3f},"
+            f"setpts=PTS-STARTPTS[v{i}]"
+        )
+        if fade_d > 0:
+            parts.append(
+                f"[0:a]atrim=start={start:.3f}:end={end:.3f},"
+                f"asetpts=PTS-STARTPTS,"
+                f"afade=t=in:d={fade_d:.3f},"
+                f"afade=t=out:d={fade_d:.3f}:st={fade_out_st:.3f}[a{i}]"
+            )
+        else:
+            parts.append(
+                f"[0:a]atrim=start={start:.3f}:end={end:.3f},"
+                f"asetpts=PTS-STARTPTS[a{i}]"
+            )
+        concat_labels.append(f"[v{i}][a{i}]")
+    n = len(segments)
+    parts.append(f"{''.join(concat_labels)}concat=n={n}:v=1:a=1[outv][outa]")
+    return ";".join(parts)
+
+
 def cut_and_concat(
     video_path: str,
     segments: list[dict],
@@ -65,56 +103,24 @@ def cut_and_concat(
 ) -> str:
     """有音セグメントをカットして結合。
 
-    各セグメントの先頭・末尾に短い音声フェードを掛けることで、
-    カット境界のクリック・ぶつ切り感を軽減する。
+    filter_complex の trim + atrim + concat を 1 パスの ffmpeg で実行する
+    （旧実装は N セグメント × N 回の libx264 再エンコードで律速していた）。
     """
     if not segments:
         raise ValueError("No segments to concatenate")
 
-    workdir = Path(output_path).parent / "segments"
-    workdir.mkdir(exist_ok=True)
-    concat_list = workdir / "concat.txt"
-
-    segment_files = []
-    for i, seg in enumerate(segments):
-        seg_file = str(workdir / f"seg_{i:04d}.mp4")
-        seg_dur = max(0.0, seg["end"] - seg["start"])
-        fade_d = min(audio_fade, seg_dur / 3) if seg_dur > 0 else 0
-        fade_out_st = max(0.0, seg_dur - fade_d)
-
-        cmd = [
-            "ffmpeg", "-y",
-            "-ss", str(seg["start"]),
-            "-i", video_path,
-            "-t", f"{seg_dur:.3f}",
-            "-c:v", "libx264", "-preset", "fast",
-            "-c:a", "aac",
-        ]
-        if fade_d > 0:
-            cmd += [
-                "-af",
-                f"afade=t=in:d={fade_d:.3f},afade=t=out:d={fade_d:.3f}:st={fade_out_st:.3f}",
-            ]
-        cmd.append(seg_file)
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"ffmpeg cut failed for segment {i}: {result.stderr}")
-        segment_files.append(seg_file)
-
-    with open(concat_list, "w") as f:
-        for sf in segment_files:
-            f.write(f"file '{sf}'\n")
-
+    filter_complex = _build_cut_concat_filter(segments, audio_fade)
     cmd = [
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-        "-i", str(concat_list),
-        "-c", "copy",
+        "ffmpeg", "-y", "-i", video_path,
+        "-filter_complex", filter_complex,
+        "-map", "[outv]", "-map", "[outa]",
+        "-c:v", "libx264", "-preset", "fast",
+        "-c:a", "aac",
         output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg concat failed: {result.stderr}")
-
+        raise RuntimeError(f"ffmpeg cut_and_concat failed: {result.stderr}")
     return output_path
 
 
