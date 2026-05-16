@@ -49,14 +49,19 @@ def _reazonspeech_result_to_words_segments(result) -> tuple[list[dict], list[dic
 
     words: list[dict] = []
     for i, sw in enumerate(subwords):
-        token_text = (sw.token or "").replace("▁", "")
+        raw_token = sw.token or ""
+        token_text = raw_token.replace("▁", "")
         if not token_text:
             continue
         start = float(sw.seconds)
         end = float(subwords[i + 1].seconds) if i + 1 < len(subwords) else last_end
         if end <= start:
             end = start + 0.05
-        words.append({"start": start, "end": end, "text": token_text})
+        # ▁ は SentencePiece の単語先頭マーカー。subtitle 改行を境界に寄せるのに使う
+        words.append({
+            "start": start, "end": end, "text": token_text,
+            "is_word_start": "▁" in raw_token,
+        })
 
     segments: list[dict] = [
         {

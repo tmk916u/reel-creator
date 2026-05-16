@@ -22,14 +22,14 @@ def test_reazonspeech_subword_to_word_conversion():
     )
     words, segments = asr._reazonspeech_result_to_words_segments(result)
     assert len(words) == 3
-    assert words[0] == {"start": 0.0, "end": 0.3, "text": "今"}
-    assert words[1] == {"start": 0.3, "end": 0.6, "text": "日"}
-    assert words[2] == {"start": 0.6, "end": 1.0, "text": "は"}
+    assert words[0] == {"start": 0.0, "end": 0.3, "text": "今", "is_word_start": False}
+    assert words[1] == {"start": 0.3, "end": 0.6, "text": "日", "is_word_start": False}
+    assert words[2] == {"start": 0.6, "end": 1.0, "text": "は", "is_word_start": False}
     assert segments == [{"start": 0.0, "end": 1.0, "text": "今日は"}]
 
 
 def test_reazonspeech_strips_bpe_boundary_marker():
-    """BPE 境界マーカー (U+2581) を除去する。"""
+    """BPE 境界マーカー (U+2581) を除去し、is_word_start に反映する。"""
     result = SimpleNamespace(
         subwords=[
             SimpleNamespace(seconds=0.0, token="▁今日"),
@@ -39,6 +39,7 @@ def test_reazonspeech_strips_bpe_boundary_marker():
     )
     words, _ = asr._reazonspeech_result_to_words_segments(result)
     assert [w["text"] for w in words] == ["今日", "は"]
+    assert [w["is_word_start"] for w in words] == [True, False]
 
 
 def test_reazonspeech_handles_empty_result():

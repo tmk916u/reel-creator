@@ -20,6 +20,8 @@ export interface ProcessSettings {
   voice_padding?: number;
   tempo_max_pause?: number;
   tempo_target_pause?: number;
+  subtitle_max_chars?: number;
+  trim_leading_silence?: boolean;
   enable_subtitles: boolean;
   enable_jump_cut?: boolean;
   enable_buzz_mode?: boolean;

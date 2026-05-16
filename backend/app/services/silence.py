@@ -8,6 +8,7 @@ def compute_voice_segments(
     padding: float = 0.04,
     extra_cuts: list[dict] | None = None,
     min_cut_length: float = 0.15,
+    trim_leading: bool = False,
 ) -> list[dict]:
     """削除区間（無音 + 追加カット）から有音区間リストを算出する。
 
@@ -17,6 +18,7 @@ def compute_voice_segments(
         padding: 有音区間の前後に残すバッファ（秒）。ぶつ切り感を軽減。
         extra_cuts: ジャンプカット由来の追加削除区間
         min_cut_length: この秒数より短い削除区間は無視（ジッタ除去）
+        trim_leading: True なら最初の有音区間の開始を 0 に詰める（冒頭空白除去）
 
     Returns:
         有音区間リスト [{"start": float, "end": float}, ...]
@@ -49,21 +51,23 @@ def compute_voice_segments(
     if current_pos < total_duration - 0.01:
         raw_segments.append({"start": current_pos, "end": total_duration})
 
-    if padding <= 0:
-        return [{"start": round(s["start"], 3), "end": round(s["end"], 3)} for s in raw_segments]
+    if padding > 0:
+        padded: list[dict] = []
+        for s in raw_segments:
+            padded.append({
+                "start": max(0.0, s["start"] - padding),
+                "end": min(total_duration, s["end"] + padding),
+            })
+        merged: list[dict] = []
+        for s in padded:
+            if merged and s["start"] <= merged[-1]["end"]:
+                merged[-1]["end"] = max(merged[-1]["end"], s["end"])
+            else:
+                merged.append(dict(s))
+    else:
+        merged = [dict(s) for s in raw_segments]
 
-    padded: list[dict] = []
-    for s in raw_segments:
-        padded.append({
-            "start": max(0.0, s["start"] - padding),
-            "end": min(total_duration, s["end"] + padding),
-        })
-
-    merged: list[dict] = []
-    for s in padded:
-        if merged and s["start"] <= merged[-1]["end"]:
-            merged[-1]["end"] = max(merged[-1]["end"], s["end"])
-        else:
-            merged.append(dict(s))
+    if trim_leading and merged:
+        merged[0]["start"] = 0.0
 
     return [{"start": round(s["start"], 3), "end": round(s["end"], 3)} for s in merged]

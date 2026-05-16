@@ -324,6 +324,7 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             silences, original_duration,
             padding=settings.voice_padding,
             extra_cuts=extra_cuts,
+            trim_leading=settings.trim_leading_silence,
         )
 
         if not voice_segments:
@@ -368,7 +369,7 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 )
             elif words:
                 remapped = _filter_words_by_segments(words, voice_segments)
-                sub_segments = words_to_segments(remapped)
+                sub_segments = words_to_segments(remapped, max_chars=settings.subtitle_max_chars)
             else:
                 # 字幕のみ有効: カット後動画から transcribe して segments を得る
                 cut_audio = str(job_dir / "cut_audio.wav")
@@ -377,6 +378,7 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                     cut_audio,
                     initial_prompt=settings.transcript_prompt or None,
                 )
+                sub_segments = words_to_segments(_w, max_chars=settings.subtitle_max_chars) if _w else sub_segments
 
             if not edited_provided:
                 # 辞書置換 → LLM校正（編集済みなら適用しない）
@@ -390,7 +392,8 @@ def _run_processing(job_id: str, settings: ProcessRequest):
 
             # キーワードハイライト（常時ON）— LLM でキーワード抽出
             full_text = " ".join(s["text"] for s in sub_segments)
-            keywords = extract_keywords(full_text)
+            # キーワードは1動画あたり3-4語に絞ると視覚ノイズが減って読みやすい
+            keywords = extract_keywords(full_text, max_keywords=4)
 
             # バズモード時は ASS でモーション字幕、それ以外は SRT
             has_word_data = any(s.get("words") for s in sub_segments)

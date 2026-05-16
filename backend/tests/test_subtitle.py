@@ -148,3 +148,38 @@ def test_apply_keyword_highlight_wraps_words():
 
 def test_apply_keyword_highlight_no_keywords():
     assert apply_keyword_highlight("テスト", []) == "テスト"
+
+
+def test_words_to_segments_respects_word_start_boundary():
+    """is_word_start=False の subword 連続は、次の word_start で flush される"""
+    words = [
+        # 「今日はとても」(6文字、1単語扱い)
+        {"start": 0.0, "end": 0.2, "text": "今日", "is_word_start": True},
+        {"start": 0.2, "end": 0.4, "text": "は", "is_word_start": False},
+        {"start": 0.4, "end": 0.6, "text": "と", "is_word_start": False},
+        {"start": 0.6, "end": 0.8, "text": "ても", "is_word_start": False},
+        # 「暑い」(2文字)
+        {"start": 0.8, "end": 1.0, "text": "暑", "is_word_start": True},
+        {"start": 1.0, "end": 1.2, "text": "い", "is_word_start": False},
+        # 「夏が」(2文字)— ここで max_chars 超過 + is_word_start=True → flush
+        {"start": 1.2, "end": 2.0, "text": "夏が", "is_word_start": True},
+        # 「好きです」(4文字)
+        {"start": 2.0, "end": 5.0, "text": "好きです", "is_word_start": True},
+    ]
+    segments = words_to_segments(words, max_chars=8, lead_time=0, tail_time=0)
+    # 単語の真ん中で切れず、「暑い」までで 8 文字に到達 → 次の word_start "夏が" で flush
+    assert segments[0]["text"] == "今日はとても暑い"
+    assert segments[1]["text"] == "夏が好きです"
+
+
+def test_words_to_segments_no_is_word_start_uses_default_true():
+    """is_word_start 未指定は True 扱い（WhisperX/faster-whisper の word は単語単位）"""
+    words = [
+        {"start": 0.0, "end": 1.0, "text": "今日はとても"},
+        {"start": 1.0, "end": 2.0, "text": "暑い"},
+        {"start": 2.0, "end": 5.0, "text": "夏ですよね"},
+    ]
+    segments = words_to_segments(words, max_chars=8, lead_time=0, tail_time=0)
+    # "暑い"までで 8 文字ちょうど。"夏ですよね" 追加で 13 文字超過 → flush
+    assert segments[0]["text"] == "今日はとても暑い"
+    assert segments[1]["text"] == "夏ですよね"

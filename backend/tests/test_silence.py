@@ -23,6 +23,22 @@ def test_compute_voice_segments_no_silence():
     assert result == [{"start": 0.0, "end": 10.0}]
 
 
+def test_compute_voice_segments_trim_leading():
+    """trim_leading=True なら冒頭無音区間を 0 に詰める"""
+    silences = [{"start": 0.0, "end": 4.0}]  # 冒頭 4 秒無音
+    out = compute_voice_segments(silences, total_duration=10.0, padding=0.0, trim_leading=True)
+    assert out[0]["start"] == 0.0
+    assert out[0]["end"] == 10.0
+
+
+def test_compute_voice_segments_trim_leading_off_keeps_offset():
+    """trim_leading=False (既定) なら冒頭無音は維持される"""
+    silences = [{"start": 0.0, "end": 4.0}]
+    out = compute_voice_segments(silences, total_duration=10.0, padding=0.0)
+    assert out[0]["start"] == 4.0
+    assert out[0]["end"] == 10.0
+
+
 def test_compute_voice_segments_all_silence():
     """全体が無音の場合は空リストを返す"""
     silences = [{"start": 0.0, "end": 10.0}]

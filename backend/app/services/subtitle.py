@@ -37,6 +37,9 @@ def words_to_segments(
 
     句読点・長い無音・最大文字数で区切る。
     視聴者が読みやすいように、字幕の開始を lead_time だけ早め、終わりを tail_time だけ伸ばす。
+
+    word に `is_word_start: bool` が含まれていれば、max_chars を超えても
+    単語の途中では切らず、次の語頭まで持ち越す（ReazonSpeech の subword 出力対策）。
     """
     if not words:
         return []
@@ -58,8 +61,15 @@ def words_to_segments(
     for i, w in enumerate(words):
         text = w["text"]
         gap = w["start"] - current_words[-1]["end"] if current_words else 0.0
+        # is_word_start 未指定は True（WhisperX/faster-whisper の word は単語単位なので常に境界）
+        is_word_start = w.get("is_word_start", True)
 
-        if current_words and (gap > max_gap or len(current_text) + len(text) > max_chars):
+        over_chars = len(current_text) + len(text) > max_chars
+        # 単語の途中では切らない（subword の中で字幕改行しない）
+        should_flush_before = current_words and (
+            gap > max_gap or (over_chars and is_word_start)
+        )
+        if should_flush_before:
             flush()
             current_words = []
             current_text = ""

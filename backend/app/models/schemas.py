@@ -38,6 +38,8 @@ class ProcessRequest(BaseModel):
     voice_padding: float = 0.04  # 有音区間の前後に残すバッファ秒（小さいほど詰まる）
     tempo_max_pause: float = 0.6  # 句読点後この秒数を超える間を縮める対象に
     tempo_target_pause: float = 0.3  # 縮めた後に残す間（秒）
+    subtitle_max_chars: int = 12  # 1字幕の最大文字数（リール用は短め推奨）
+    trim_leading_silence: bool = True  # 冒頭の発話前の空白を 0 に詰める
     enable_subtitles: bool = False
     enable_jump_cut: bool = False
     enable_buzz_mode: bool = False  # 冒頭フック + モーション字幕
