@@ -20,6 +20,8 @@ export interface ProcessSettings {
   voice_padding?: number;
   tempo_max_pause?: number;
   tempo_target_pause?: number;
+  word_gap_max?: number;
+  word_gap_target?: number;
   subtitle_max_chars?: number;
   trim_leading_silence?: boolean;
   skip_preview?: boolean;  // 字幕プレビューを飛ばして直接処理に進む（量産モード）

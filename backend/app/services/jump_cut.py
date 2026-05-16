@@ -132,6 +132,40 @@ def detect_tempo_ranges(
     return ranges
 
 
+def detect_word_gaps(
+    words: list[dict],
+    max_gap: float = 0.25,
+    target_gap: float = 0.10,
+) -> list[dict]:
+    """word 間のギャップ（無音・鼻啜り音・息継ぎ・考える間など、言葉でない区間）
+    を target_gap まで圧縮する削除区間を返す。
+
+    detect_tempo_ranges との違い:
+    - 句読点不問。あらゆる word-word 境界が対象。
+    - 鼻啜り音や息継ぎ（VAD が弱い人声として検出してしまう音）も、
+      ReazonSpeech が text 化しなかった隙間として削除される。
+
+    Args:
+        words: word-level transcript [{"start", "end", "text", ...}]
+        max_gap: この秒数を超える gap を圧縮対象とする
+        target_gap: 圧縮後に残す gap（秒）
+
+    Returns:
+        削除区間リスト
+    """
+    ranges: list[dict] = []
+    for i in range(len(words) - 1):
+        cur = words[i]
+        nxt = words[i + 1]
+        gap = nxt["start"] - cur["end"]
+        if gap > max_gap:
+            cut_start = cur["end"] + target_gap
+            cut_end = nxt["start"]
+            if cut_end > cut_start + 0.01:
+                ranges.append({"start": cut_start, "end": cut_end})
+    return ranges
+
+
 def detect_redundant_speech(
     words: list[dict],
     window_words: int = 10,

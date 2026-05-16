@@ -48,6 +48,8 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     voice_padding: 0.05,
     tempo_max_pause: 0.35,
     tempo_target_pause: 0.15,
+    word_gap_max: 0.20,
+    word_gap_target: 0.08,
     subtitle_max_chars: 10,
     skip_preview: true,  // 量産用: 字幕プレビューを飛ばす
     font_size: "large",
@@ -76,6 +78,8 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
     voice_padding: 0.04,
     tempo_max_pause: 0.6,
     tempo_target_pause: 0.3,
+    word_gap_max: 0.25,
+    word_gap_target: 0.10,
     subtitle_max_chars: 12,
     enable_subtitles: false,
     enable_jump_cut: false,
@@ -215,6 +219,46 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
             <span>ぎっしり（0）</span>
             <span>余裕（0.2秒）</span>
           </div>
+        </div>
+
+        {/* 発話間ギャップ（鼻啜り音・微妙な間） */}
+        <div>
+          <label className="block text-sm text-gray-300 mb-1">
+            発話間ギャップ: 最大 {(settings.word_gap_max ?? 0.25).toFixed(2)}秒 → {(settings.word_gap_target ?? 0.10).toFixed(2)}秒に圧縮
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="range"
+              min={0.1}
+              max={0.8}
+              step={0.05}
+              value={settings.word_gap_max ?? 0.25}
+              onChange={(e) =>
+                setSettings((s) => ({ ...s, word_gap_max: Number(e.target.value) }))
+              }
+              className="w-full"
+              aria-label="word_gap_max"
+            />
+            <input
+              type="range"
+              min={0.05}
+              max={0.3}
+              step={0.01}
+              value={settings.word_gap_target ?? 0.10}
+              onChange={(e) =>
+                setSettings((s) => ({ ...s, word_gap_target: Number(e.target.value) }))
+              }
+              className="w-full"
+              aria-label="word_gap_target"
+            />
+          </div>
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>検出閾値（左）</span>
+            <span>残すギャップ（右）</span>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            鼻啜り音・息継ぎ・考える間を句読点不問で圧縮（AIジャンプカット ON 時のみ）
+          </p>
         </div>
 
         {/* 句読点後の間（テンポカット） */}

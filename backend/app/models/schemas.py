@@ -38,6 +38,8 @@ class ProcessRequest(BaseModel):
     voice_padding: float = 0.04  # 有音区間の前後に残すバッファ秒（小さいほど詰まる）
     tempo_max_pause: float = 0.6  # 句読点後この秒数を超える間を縮める対象に
     tempo_target_pause: float = 0.3  # 縮めた後に残す間（秒）
+    word_gap_max: float = 0.25  # word 間ギャップがこの秒数を超えると圧縮対象に
+    word_gap_target: float = 0.10  # 圧縮後に残す word 間ギャップ（秒）
     subtitle_max_chars: int = 12  # 1字幕の最大文字数（リール用は短め推奨）
     trim_leading_silence: bool = False  # 互換のため残す（現状は no-op、VAD が冒頭無音を自動削除）
     enable_subtitles: bool = False

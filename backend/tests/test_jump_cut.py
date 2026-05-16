@@ -5,6 +5,7 @@ from app.services.jump_cut import (
     detect_filler_ranges,
     detect_redundant_speech,
     detect_tempo_ranges,
+    detect_word_gaps,
     load_fillers,
     merge_ranges,
 )
@@ -173,6 +174,49 @@ def test_detect_redundant_speech_no_duplicate_no_cuts():
             _make_words(["明", "日", "は", "雨", "の", "予", "報", "だ", "か", "ら", "出", "か", "け"], start_offset=20.0)
     cuts = detect_redundant_speech(words, window_words=10, similarity_threshold=0.7)
     assert cuts == []
+
+
+def test_detect_word_gaps_compresses_long_gap():
+    """word 間ギャップが max_gap を超えると target_gap まで圧縮される"""
+    words = [
+        {"start": 0.0, "end": 1.0, "text": "あ"},
+        {"start": 2.0, "end": 3.0, "text": "い"},  # gap 1.0s
+    ]
+    cuts = detect_word_gaps(words, max_gap=0.25, target_gap=0.10)
+    assert len(cuts) == 1
+    # 1.0s の word.end + 0.10s target_gap = 1.10 から 2.0s までを削除
+    assert cuts[0]["start"] == 1.10
+    assert cuts[0]["end"] == 2.0
+
+
+def test_detect_word_gaps_short_gap_kept():
+    """max_gap 以下のギャップは削除しない（自然な発話の間を保護）"""
+    words = [
+        {"start": 0.0, "end": 1.0, "text": "あ"},
+        {"start": 1.20, "end": 2.20, "text": "い"},  # gap 0.20s（句読点不問でも保護）
+    ]
+    cuts = detect_word_gaps(words, max_gap=0.25, target_gap=0.10)
+    assert cuts == []
+
+
+def test_detect_word_gaps_ignores_punctuation():
+    """detect_tempo_ranges と違い、word の句読点は問わない（あらゆる境界が対象）"""
+    words = [
+        {"start": 0.0, "end": 1.0, "text": "あ"},  # 句読点なし
+        {"start": 1.50, "end": 2.0, "text": "い"},  # gap 0.50s
+    ]
+    cuts = detect_word_gaps(words, max_gap=0.25, target_gap=0.10)
+    assert len(cuts) == 1
+    assert cuts[0]["start"] == 1.10
+    assert cuts[0]["end"] == 1.50
+
+
+def test_detect_word_gaps_empty_words():
+    assert detect_word_gaps([]) == []
+
+
+def test_detect_word_gaps_single_word():
+    assert detect_word_gaps([{"start": 0.0, "end": 1.0, "text": "あ"}]) == []
 
 
 def test_detect_redundant_speech_too_few_words():

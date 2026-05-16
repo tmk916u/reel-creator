@@ -25,7 +25,7 @@ from app.services.subtitle import (
 )
 from app.services.jump_cut import (
     detect_filler_ranges, detect_tempo_ranges, detect_redundant_speech,
-    load_fillers, merge_ranges,
+    detect_word_gaps, load_fillers, merge_ranges,
     load_corrections, apply_corrections_to_words, apply_corrections_to_text,
 )
 from app.services.llm import (
@@ -325,8 +325,16 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             redundant_cuts = detect_redundant_speech(words)
             if redundant_cuts:
                 jump_cut_notes.append(f"重複発話 {len(redundant_cuts)} 区間を検出（機械的補強）")
+            # word 間ギャップ削除（鼻啜り音・息継ぎ・考える間など、句読点不問の圧縮）
+            word_gap_cuts = detect_word_gaps(
+                words,
+                max_gap=settings.word_gap_max,
+                target_gap=settings.word_gap_target,
+            )
+            if word_gap_cuts:
+                jump_cut_notes.append(f"発話間ギャップ {len(word_gap_cuts)} 箇所を圧縮")
             extra_cuts = merge_ranges(
-                filler_cuts + tempo_cuts + restatement_cuts + redundant_cuts
+                filler_cuts + tempo_cuts + restatement_cuts + redundant_cuts + word_gap_cuts
             )
 
         # 単語境界スナップ: silence と extra_cuts が単語の中で切らないよう補正
