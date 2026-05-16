@@ -28,7 +28,7 @@ from app.services.subtitle import (
 )
 from app.services.jump_cut import (
     detect_filler_ranges, detect_tempo_ranges, detect_redundant_speech,
-    detect_word_gaps, load_fillers, merge_ranges,
+    detect_word_gaps, detect_oversized_words, load_fillers, merge_ranges,
     load_corrections, apply_corrections_to_words, apply_corrections_to_text,
 )
 from app.services.llm import (
@@ -351,8 +351,19 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             )
             if word_gap_cuts:
                 jump_cut_notes.append(f"発話間ギャップ {len(word_gap_cuts)} 箇所を圧縮")
+            # 異常に長い word の中央を削除（ReazonSpeech の subword timestamp 推定で
+            # 発話間の沈黙が word に取り込まれる現象への対策）
+            oversized_cuts = detect_oversized_words(
+                words, max_word_duration=settings.max_word_duration,
+            )
+            if oversized_cuts:
+                total_secs = sum(c["end"] - c["start"] for c in oversized_cuts)
+                jump_cut_notes.append(
+                    f"異常に長い word {len(oversized_cuts)} 箇所の沈黙を削除 ({total_secs:.1f}秒)"
+                )
             extra_cuts = merge_ranges(
-                filler_cuts + tempo_cuts + restatement_cuts + redundant_cuts + word_gap_cuts
+                filler_cuts + tempo_cuts + restatement_cuts + redundant_cuts
+                + word_gap_cuts + oversized_cuts
             )
 
         # 単語境界スナップ: silence と extra_cuts が単語の中で切らないよう補正

@@ -50,6 +50,7 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     tempo_target_pause: 0.15,
     word_gap_max: 0.20,
     word_gap_target: 0.08,
+    max_word_duration: 0.8,  // 攻めに: 0.8秒以上の word は中身に沈黙ありとみなす
     micro_silence_min_duration: 0.10,
     subtitle_max_chars: 10,
     skip_preview: true,  // 量産用: 字幕プレビューを飛ばす
@@ -81,6 +82,7 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
     tempo_target_pause: 0.3,
     word_gap_max: 0.25,
     word_gap_target: 0.10,
+    max_word_duration: 1.0,
     micro_silence_min_duration: 0.10,
     subtitle_max_chars: 12,
     enable_subtitles: false,

@@ -132,6 +132,43 @@ def detect_tempo_ranges(
     return ranges
 
 
+def detect_oversized_words(
+    words: list[dict],
+    max_word_duration: float = 1.0,
+    keep_head: float = 0.2,
+    keep_tail: float = 0.2,
+) -> list[dict]:
+    """word.end - word.start が異常に長い word の中央部を削除候補にする。
+
+    ReazonSpeech NeMo の subword は単一点 timestamp で、次の subword までの
+    範囲を duration として推定する仕組み。発話の間に長い沈黙(意図的な
+    ポーズや言い淀み)があると、前の subword の推定 duration が異常に
+    長くなり、word.end が実発話より大幅に後ろにズレる。
+
+    例: 「きて」(36.94-37.18) → 「首」(37.18-41.42, 4.24秒!) の場合、
+    「首」word の中に約4秒の無音が埋もれている。これを keep_head/keep_tail
+    だけ残して中央を削除する。
+
+    Args:
+        words: word-level transcript [{"start", "end", "text", ...}]
+        max_word_duration: この秒数を超える word を対象に
+        keep_head: 削除区間の前に残す秒数(word 開始から)
+        keep_tail: 削除区間の後に残す秒数(word 終端まで)
+
+    Returns:
+        削除区間リスト
+    """
+    ranges: list[dict] = []
+    for w in words:
+        dur = w["end"] - w["start"]
+        if dur > max_word_duration:
+            cut_start = w["start"] + keep_head
+            cut_end = w["end"] - keep_tail
+            if cut_end > cut_start + 0.05:
+                ranges.append({"start": cut_start, "end": cut_end})
+    return ranges
+
+
 def detect_word_gaps(
     words: list[dict],
     max_gap: float = 0.25,

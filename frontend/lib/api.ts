@@ -22,6 +22,7 @@ export interface ProcessSettings {
   tempo_target_pause?: number;
   word_gap_max?: number;
   word_gap_target?: number;
+  max_word_duration?: number;
   micro_silence_min_duration?: number;
   subtitle_max_chars?: number;
   trim_leading_silence?: boolean;

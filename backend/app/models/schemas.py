@@ -40,6 +40,9 @@ class ProcessRequest(BaseModel):
     tempo_target_pause: float = 0.3  # 縮めた後に残す間（秒）
     word_gap_max: float = 0.25  # word 間ギャップがこの秒数を超えると圧縮対象に
     word_gap_target: float = 0.10  # 圧縮後に残す word 間ギャップ（秒）
+    max_word_duration: float = 1.0  # word.end-start がこの秒数を超えると中央部を削除候補に
+    # ReazonSpeech の subword 単一点 timestamp 推定により、発話間の長い沈黙が word
+    # に取り込まれる現象への対策。例:「首」word が 4.24秒続く → 中央 3.84秒を削除。
     micro_silence_min_duration: float = 0.10  # 音響的な微小無音検出の閾値(秒)。
     # ReazonSpeech の word 内に埋もれる「整骨院の前のちょっとした間」のような短い無音を
     # ffmpeg silencedetect で別途検出し、Silero VAD silences と union を取る。

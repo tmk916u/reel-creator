@@ -3,6 +3,7 @@ from pathlib import Path
 
 from app.services.jump_cut import (
     detect_filler_ranges,
+    detect_oversized_words,
     detect_redundant_speech,
     detect_tempo_ranges,
     detect_word_gaps,
@@ -217,6 +218,46 @@ def test_detect_word_gaps_empty_words():
 
 def test_detect_word_gaps_single_word():
     assert detect_word_gaps([{"start": 0.0, "end": 1.0, "text": "あ"}]) == []
+
+
+def test_detect_oversized_words_finds_long_word():
+    """word duration > max_word_duration の中央を削除区間にする"""
+    # 「首」 が 4.24秒 続くケース
+    words = [
+        {"start": 37.18, "end": 41.42, "text": "首"},
+        {"start": 41.42, "end": 41.66, "text": "が"},
+    ]
+    cuts = detect_oversized_words(words, max_word_duration=1.0, keep_head=0.2, keep_tail=0.2)
+    assert len(cuts) == 1
+    # 37.18 + 0.2 = 37.38, 41.42 - 0.2 = 41.22
+    assert abs(cuts[0]["start"] - 37.38) < 1e-6
+    assert abs(cuts[0]["end"] - 41.22) < 1e-6
+
+
+def test_detect_oversized_words_skips_short_word():
+    """通常の word は対象外"""
+    words = [
+        {"start": 0.0, "end": 0.5, "text": "あ"},  # 0.5秒
+        {"start": 0.5, "end": 1.4, "text": "い"},  # 0.9秒
+    ]
+    cuts = detect_oversized_words(words, max_word_duration=1.0)
+    assert cuts == []
+
+
+def test_detect_oversized_words_keep_head_tail_protects_short_cuts():
+    """keep_head+keep_tail を引いて削除幅が極小になるなら出力しない"""
+    # 1.1秒 word、keep_head+keep_tail=0.4 → 削除幅 0.7秒(出力される)
+    words = [{"start": 0.0, "end": 1.1, "text": "あ"}]
+    cuts = detect_oversized_words(words, max_word_duration=1.0, keep_head=0.2, keep_tail=0.2)
+    assert len(cuts) == 1
+    # ギリギリ削除幅 = 0.06秒のケース(0.05 閾値を超えるか境界)
+    words2 = [{"start": 0.0, "end": 1.05, "text": "あ"}]
+    cuts2 = detect_oversized_words(words2, max_word_duration=1.0, keep_head=0.5, keep_tail=0.5)
+    assert cuts2 == []  # 0.05以下なので出力しない
+
+
+def test_detect_oversized_words_empty():
+    assert detect_oversized_words([]) == []
 
 
 def test_detect_redundant_speech_too_few_words():
