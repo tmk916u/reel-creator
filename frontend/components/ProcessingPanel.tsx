@@ -49,7 +49,6 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     tempo_max_pause: 0.35,
     tempo_target_pause: 0.15,
     subtitle_max_chars: 10,
-    trim_leading_silence: true,
     font_size: "large",
     subtitle_position: "bottom",
     subtitle_color: "yellow",
@@ -77,7 +76,6 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
     tempo_max_pause: 0.6,
     tempo_target_pause: 0.3,
     subtitle_max_chars: 12,
-    trim_leading_silence: true,
     enable_subtitles: false,
     enable_jump_cut: false,
     enable_buzz_mode: false,
@@ -281,25 +279,6 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
           <p className="text-xs text-gray-500 mt-1">
             リールは 10〜12 文字が読みやすい目安
           </p>
-        </div>
-
-        {/* 冒頭空白カット */}
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-gray-300">冒頭の空白をカット</span>
-          <button
-            onClick={() =>
-              setSettings((s) => ({ ...s, trim_leading_silence: !(s.trim_leading_silence ?? true) }))
-            }
-            className={`relative w-12 h-6 rounded-full transition-colors ${
-              (settings.trim_leading_silence ?? true) ? "bg-purple-500" : "bg-gray-600"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
-                (settings.trim_leading_silence ?? true) ? "translate-x-6" : ""
-              }`}
-            />
-          </button>
         </div>
 
         {/* AIジャンプカットトグル */}

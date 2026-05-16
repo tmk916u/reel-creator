@@ -18,7 +18,13 @@ def compute_voice_segments(
         padding: 有音区間の前後に残すバッファ（秒）。ぶつ切り感を軽減。
         extra_cuts: ジャンプカット由来の追加削除区間
         min_cut_length: この秒数より短い削除区間は無視（ジッタ除去）
-        trim_leading: True なら最初の有音区間の開始を 0 に詰める（冒頭空白除去）
+        trim_leading: 互換のため引数は残すが、現状は **何もしない**。
+          以前は最初の voice segment の start を 0 に詰めていたが、
+          cut_and_concat が voice_segments を元動画時刻で切り出すため、
+          start=0 にすると逆に冒頭無音を動画に含めてしまう（+ 字幕の
+          時刻マッピングも壊れる）副作用があり無効化した。冒頭無音は
+          VAD が検出して silences に含まれるため、compute_voice_segments
+          で自動的に削除される。
 
     Returns:
         有音区間リスト [{"start": float, "end": float}, ...]
@@ -67,7 +73,5 @@ def compute_voice_segments(
     else:
         merged = [dict(s) for s in raw_segments]
 
-    if trim_leading and merged:
-        merged[0]["start"] = 0.0
-
+    # trim_leading は副作用のため一時無効化（docstring 参照）
     return [{"start": round(s["start"], 3), "end": round(s["end"], 3)} for s in merged]
