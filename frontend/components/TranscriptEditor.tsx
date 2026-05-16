@@ -74,7 +74,8 @@ export default function TranscriptEditor({
           )}
         </div>
         <p className="text-[11px] text-gray-500 mt-3">
-          💡 編集するとモーション字幕（カラオケ風）は無効になり、静的字幕で出力されます
+          💡 編集なしで OK を押すとモーション字幕（カラオケ風）が有効のまま処理されます。
+          編集すると静的字幕に切り替わります。
         </p>
       </div>
 

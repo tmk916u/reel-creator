@@ -109,13 +109,19 @@ export default function Home() {
   const handleConfirmTranscript = useCallback(
     async (edited: TranscriptSegment[]) => {
       if (!pendingSettings) return;
+      // 編集がない場合は edited_segments を送らない。
+      // edited_segments を送ると backend で edited_provided=True パスに入り、
+      // モーション字幕(ASS)が無効化されるため、プレビュー素通しでは未送信にする。
+      const hasEdits =
+        edited.length !== previewSegments.length ||
+        edited.some((s, i) => s.text !== previewSegments[i]?.text);
       const settings: ProcessSettings = {
         ...pendingSettings,
-        edited_segments: edited,
+        ...(hasEdits ? { edited_segments: edited } : {}),
       };
       await runProcessing(settings);
     },
-    [pendingSettings, runProcessing]
+    [pendingSettings, previewSegments, runProcessing]
   );
 
   const handleCancelPreview = useCallback(() => {

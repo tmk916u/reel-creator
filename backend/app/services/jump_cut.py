@@ -132,6 +132,63 @@ def detect_tempo_ranges(
     return ranges
 
 
+def detect_redundant_speech(
+    words: list[dict],
+    window_words: int = 12,
+    similarity_threshold: float = 0.7,
+    min_gap_seconds: float = 5.0,
+) -> list[dict]:
+    """連続する word チャンク同士のテキスト類似度を見て、繰り返しの 2 回目を
+    削除候補にする（LLM の detect_restatements が見逃した重複の機械的補強）。
+
+    話者が同じ内容を別言葉で 2 回話す（例: まとめ部分の再説明）パターンを
+    SequenceMatcher.ratio() で検出する。LLM ベースの判定は再現性が低いため、
+    機械的なバックアップとして併用する。
+
+    Args:
+        words: word-level transcript
+        window_words: 比較するチャンクの word 数
+        similarity_threshold: 0.0-1.0。この値以上で繰り返しとみなす
+        min_gap_seconds: 2 つのチャンクの最小時間ギャップ。直近の言い直しは
+            LLM の detect_restatements 側で扱うため、こちらは離れた繰り返し
+            （まとめパートなど）に絞る
+
+    Returns:
+        削除区間リスト [{"start", "end"}]（後段のチャンクを削除）
+    """
+    if len(words) < window_words * 2:
+        return []
+
+    from difflib import SequenceMatcher
+
+    step = max(1, window_words // 2)
+    chunks: list[dict] = []
+    for i in range(0, len(words) - window_words + 1, step):
+        cw = words[i : i + window_words]
+        chunks.append({
+            "start": cw[0]["start"],
+            "end": cw[-1]["end"],
+            "text": "".join(w["text"] for w in cw),
+        })
+
+    cuts: list[dict] = []
+    consumed: set[int] = set()
+    for i, a in enumerate(chunks):
+        if i in consumed:
+            continue
+        for j in range(i + 1, len(chunks)):
+            if j in consumed:
+                continue
+            b = chunks[j]
+            if b["start"] < a["end"] + min_gap_seconds:
+                continue  # 近すぎる(LLM 担当)
+            sim = SequenceMatcher(None, a["text"], b["text"]).ratio()
+            if sim >= similarity_threshold:
+                cuts.append({"start": b["start"], "end": b["end"]})
+                consumed.add(j)
+    return cuts
+
+
 def merge_ranges(ranges: list[dict], join_threshold: float = 0.05) -> list[dict]:
     """重複・隣接する削除区間を統合する。
 

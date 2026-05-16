@@ -24,7 +24,8 @@ from app.services.subtitle import (
     words_to_segments, apply_keyword_highlight,
 )
 from app.services.jump_cut import (
-    detect_filler_ranges, detect_tempo_ranges, load_fillers, merge_ranges,
+    detect_filler_ranges, detect_tempo_ranges, detect_redundant_speech,
+    load_fillers, merge_ranges,
     load_corrections, apply_corrections_to_words, apply_corrections_to_text,
 )
 from app.services.llm import (
@@ -48,7 +49,12 @@ def _font_size_to_px(size: FontSize) -> int:
 
 
 def _filter_words_by_segments(words: list[dict], segments: list[dict]) -> list[dict]:
-    """カット後動画のタイムスタンプに合うように word を再マッピングする。"""
+    """元時刻の words から、voice_segments に**完全に含まれる** word だけ残し、
+    カット後動画の累積時刻に変換する。
+
+    境界を跨ぐ word は除外（中途半端な時刻で字幕の表示時間が 0.09 秒のような
+    異常値になるのを防ぐ）。is_word_start などの補助メタデータは保持する。
+    """
     if not words or not segments:
         return []
     remapped: list[dict] = []
@@ -57,11 +63,14 @@ def _filter_words_by_segments(words: list[dict], segments: list[dict]) -> list[d
         seg_start, seg_end = seg["start"], seg["end"]
         for w in words:
             if w["start"] >= seg_start and w["end"] <= seg_end:
-                remapped.append({
+                new_w = {
                     "start": offset + (w["start"] - seg_start),
                     "end": offset + (w["end"] - seg_start),
                     "text": w["text"],
-                })
+                }
+                if "is_word_start" in w:
+                    new_w["is_word_start"] = w["is_word_start"]
+                remapped.append(new_w)
         offset += seg_end - seg_start
     return remapped
 
@@ -312,7 +321,13 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             restatement_cuts = detect_restatements(words)
             if not restatement_cuts and words:
                 jump_cut_notes.append("言い直し検出はスキップしました（LLM未設定または失敗）")
-            extra_cuts = merge_ranges(filler_cuts + tempo_cuts + restatement_cuts)
+            # LLM 検出を機械的な類似度ベース重複検出で補強（離れた箇所での同じ話の繰り返し対策）
+            redundant_cuts = detect_redundant_speech(words)
+            if redundant_cuts:
+                jump_cut_notes.append(f"重複発話 {len(redundant_cuts)} 区間を検出（機械的補強）")
+            extra_cuts = merge_ranges(
+                filler_cuts + tempo_cuts + restatement_cuts + redundant_cuts
+            )
 
         # 単語境界スナップ: silence と extra_cuts が単語の中で切らないよう補正
         if words:

@@ -3,6 +3,7 @@ from pathlib import Path
 
 from app.services.jump_cut import (
     detect_filler_ranges,
+    detect_redundant_speech,
     detect_tempo_ranges,
     load_fillers,
     merge_ranges,
@@ -136,3 +137,46 @@ def test_merge_ranges_unsorted_input():
 
 def test_merge_ranges_empty():
     assert merge_ranges([]) == []
+
+
+def _make_words(texts: list[str], start_offset: float = 0.0, dur: float = 0.4) -> list[dict]:
+    return [
+        {"start": start_offset + i * dur, "end": start_offset + (i + 1) * dur, "text": t}
+        for i, t in enumerate(texts)
+    ]
+
+
+def test_detect_redundant_speech_finds_distant_repeat():
+    """離れた2箇所で似た発話 → 後段を削除候補に"""
+    intro = _make_words(["健", "康", "は", "運", "動", "睡", "眠", "栄", "養", "が", "大", "事", "だ"])
+    middle = _make_words(["別", "の", "話", "を", "し", "て", "い", "る", "間", "に", "時", "間", "が", "流", "れ", "る"], start_offset=10.0)
+    repeat = _make_words(["健", "康", "は", "運", "動", "睡", "眠", "栄", "養", "が", "大", "事", "だ"], start_offset=30.0)
+    words = intro + middle + repeat
+    cuts = detect_redundant_speech(words, window_words=12, similarity_threshold=0.7, min_gap_seconds=5.0)
+    assert len(cuts) >= 1
+    # 削除対象は後段の repeat 周辺
+    assert all(c["start"] >= 30.0 for c in cuts)
+
+
+def test_detect_redundant_speech_ignores_near_repeats():
+    """直近の言い直し（5秒以内）は LLM 担当のためスキップする"""
+    a = _make_words(["こ", "ん", "に", "ち", "は", "私", "は", "山", "田", "で", "す", "今", "日"])
+    # 同じ内容を 2 秒後（min_gap=5.0 未満）に繰り返し → 検出されないはず
+    b = _make_words(["こ", "ん", "に", "ち", "は", "私", "は", "山", "田", "で", "す", "今", "日"], start_offset=2.0)
+    cuts = detect_redundant_speech(a + b, window_words=12, similarity_threshold=0.7, min_gap_seconds=5.0)
+    assert cuts == []
+
+
+def test_detect_redundant_speech_no_duplicate_no_cuts():
+    """重複がない普通の発話は cut 0 件"""
+    words = _make_words(["今", "日", "は", "晴", "れ", "の", "い", "い", "天", "気", "で", "散", "歩"]) + \
+            _make_words(["明", "日", "は", "雨", "の", "予", "報", "だ", "か", "ら", "出", "か", "け"], start_offset=20.0)
+    cuts = detect_redundant_speech(words, window_words=10, similarity_threshold=0.7)
+    assert cuts == []
+
+
+def test_detect_redundant_speech_too_few_words():
+    """word 数が少なすぎる場合は空"""
+    words = _make_words(["短", "い", "発", "話"])
+    cuts = detect_redundant_speech(words, window_words=10)
+    assert cuts == []
