@@ -172,6 +172,23 @@ def test_words_to_segments_respects_word_start_boundary():
     assert segments[1]["text"] == "夏が好きです"
 
 
+def test_words_to_segments_hard_limit_when_no_word_start():
+    """is_word_start=False の subword が連続して word_start が来ない場合、
+    絶対上限 max_chars*1.5 で強制 flush される（暴走防止）"""
+    # is_word_start=False ばかりだが、テキストは変化させる（dedup の影響を避ける）
+    chars = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよ"
+    words = [
+        {"start": 0.5 * i, "end": 0.5 * (i + 1), "text": chars[i], "is_word_start": False}
+        for i in range(len(chars))
+    ]
+    segments = words_to_segments(words, max_chars=8, lead_time=0, tail_time=0)
+    # 単語境界が一向に来なくても、絶対上限で複数セグメントに分かれる
+    assert len(segments) >= 2, "暴走: 1セグメントに全文が結合されている"
+    # 各セグメントの文字数は hard_limit(=12) を大きく超えない
+    for seg in segments:
+        assert len(seg["text"]) <= 14, f"暴走: {len(seg['text'])}文字"
+
+
 def test_words_to_segments_no_is_word_start_uses_default_true():
     """is_word_start 未指定は True 扱い（WhisperX/faster-whisper の word は単語単位）"""
     words = [

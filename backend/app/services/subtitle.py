@@ -58,6 +58,9 @@ def words_to_segments(
             "words": list(current_words),
         })
 
+    # 単語境界が一向に来ない場合の絶対上限（SentencePiece マーカーが希薄な
+    # ReazonSpeech 出力で is_word_start=False が連続して flush されないのを防ぐ）
+    hard_limit = max(int(max_chars * 1.5), max_chars + 4)
     for i, w in enumerate(words):
         text = w["text"]
         gap = w["start"] - current_words[-1]["end"] if current_words else 0.0
@@ -65,9 +68,11 @@ def words_to_segments(
         is_word_start = w.get("is_word_start", True)
 
         over_chars = len(current_text) + len(text) > max_chars
-        # 単語の途中では切らない（subword の中で字幕改行しない）
+        over_hard = len(current_text) + len(text) > hard_limit
+        # 単語の途中では切らない（subword の中で字幕改行しない）が、
+        # 絶対上限を超えるなら is_word_start に関係なく強制 flush
         should_flush_before = current_words and (
-            gap > max_gap or (over_chars and is_word_start)
+            gap > max_gap or (over_chars and is_word_start) or over_hard
         )
         if should_flush_before:
             flush()
