@@ -40,6 +40,10 @@ class ProcessRequest(BaseModel):
     tempo_target_pause: float = 0.3  # 縮めた後に残す間（秒）
     word_gap_max: float = 0.25  # word 間ギャップがこの秒数を超えると圧縮対象に
     word_gap_target: float = 0.10  # 圧縮後に残す word 間ギャップ（秒）
+    micro_silence_min_duration: float = 0.10  # 音響的な微小無音検出の閾値(秒)。
+    # ReazonSpeech の word 内に埋もれる「整骨院の前のちょっとした間」のような短い無音を
+    # ffmpeg silencedetect で別途検出し、Silero VAD silences と union を取る。
+    # 0 にすると無効。
     subtitle_max_chars: int = 12  # 1字幕の最大文字数（リール用は短め推奨）
     trim_leading_silence: bool = False  # 互換のため残す（現状は no-op、VAD が冒頭無音を自動削除）
     enable_subtitles: bool = False

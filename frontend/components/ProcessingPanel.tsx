@@ -50,6 +50,7 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     tempo_target_pause: 0.15,
     word_gap_max: 0.20,
     word_gap_target: 0.08,
+    micro_silence_min_duration: 0.10,
     subtitle_max_chars: 10,
     skip_preview: true,  // 量産用: 字幕プレビューを飛ばす
     font_size: "large",
@@ -80,6 +81,7 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
     tempo_target_pause: 0.3,
     word_gap_max: 0.25,
     word_gap_target: 0.10,
+    micro_silence_min_duration: 0.10,
     subtitle_max_chars: 12,
     enable_subtitles: false,
     enable_jump_cut: false,
@@ -197,6 +199,31 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
             <span>短い無音も削除</span>
             <span>長い無音のみ削除</span>
           </div>
+        </div>
+
+        {/* 微小無音検出 (word 内部の「ちょっとした間」) */}
+        <div>
+          <label className="block text-sm text-gray-300 mb-1">
+            微小無音の検出閾値: {(settings.micro_silence_min_duration ?? 0.10).toFixed(2)}秒
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={0.30}
+            step={0.01}
+            value={settings.micro_silence_min_duration ?? 0.10}
+            onChange={(e) =>
+              setSettings((s) => ({ ...s, micro_silence_min_duration: Number(e.target.value) }))
+            }
+            className="w-full"
+          />
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>OFF(0)</span>
+            <span>緩(0.30秒)</span>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            ReazonSpeech が拾わない word 内部の短い無音(整骨院の前のちょっとした間など)も削除します
+          </p>
         </div>
 
         {/* 前後padding（有音区間の前後保護） */}

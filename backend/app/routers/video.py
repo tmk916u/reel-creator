@@ -1,9 +1,12 @@
 # backend/app/routers/video.py
+import logging
 import uuid
 import shutil
 import asyncio
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
@@ -274,6 +277,21 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             silences = detect_silence(
                 audio_path, settings.silence_threshold, settings.min_silence_duration,
             )
+        # 微小無音検出: word 内部に埋もれる「整骨院の前のちょっとした間」のような
+        # 0.1〜0.2 秒の無音を ffmpeg silencedetect で別途検出して union する
+        if settings.micro_silence_min_duration > 0:
+            micro = detect_silence(
+                audio_path,
+                threshold=settings.silence_threshold,
+                min_duration=settings.micro_silence_min_duration,
+            )
+            if micro:
+                before = len(silences)
+                silences = merge_ranges(silences + micro)
+                logger.info(
+                    "micro silence: +%d 件追加 (min=%.2fs), union後 %d → %d",
+                    len(micro), settings.micro_silence_min_duration, before, len(silences),
+                )
         original_duration = get_video_duration(input_path)
 
         # Stage 2.5 / 3: AI Jump Cut（有効時）
