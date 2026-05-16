@@ -10,7 +10,7 @@ interface Props {
   onStart: (settings: ProcessSettings) => void;
 }
 
-type Preset = "custom" | "education" | "entertainment" | "news";
+type Preset = "custom" | "education" | "entertainment" | "tight" | "news";
 
 const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
   education: {
@@ -19,6 +19,9 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     enable_buzz_mode: true,
     silence_threshold: -30,
     min_silence_duration: 0.3,
+    voice_padding: 0.04,
+    tempo_max_pause: 0.6,
+    tempo_target_pause: 0.3,
     font_size: "medium",
     subtitle_position: "bottom",
     subtitle_color: "white",
@@ -29,6 +32,22 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     enable_buzz_mode: true,
     silence_threshold: -25,
     min_silence_duration: 0.3,
+    voice_padding: 0.04,
+    tempo_max_pause: 0.5,
+    tempo_target_pause: 0.25,
+    font_size: "large",
+    subtitle_position: "bottom",
+    subtitle_color: "yellow",
+  },
+  tight: {
+    enable_subtitles: true,
+    enable_jump_cut: true,
+    enable_buzz_mode: true,
+    silence_threshold: -25,
+    min_silence_duration: 0.2,
+    voice_padding: 0.02,
+    tempo_max_pause: 0.35,
+    tempo_target_pause: 0.15,
     font_size: "large",
     subtitle_position: "bottom",
     subtitle_color: "yellow",
@@ -39,6 +58,9 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     enable_buzz_mode: false,
     silence_threshold: -35,
     min_silence_duration: 0.7,
+    voice_padding: 0.08,
+    tempo_max_pause: 0.8,
+    tempo_target_pause: 0.4,
     font_size: "medium",
     subtitle_position: "bottom",
     subtitle_color: "white",
@@ -49,6 +71,9 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
   const [settings, setSettings] = useState<ProcessSettings>({
     silence_threshold: -30,
     min_silence_duration: 0.3,
+    voice_padding: 0.04,
+    tempo_max_pause: 0.6,
+    tempo_target_pause: 0.3,
     enable_subtitles: false,
     enable_jump_cut: false,
     enable_buzz_mode: false,
@@ -88,10 +113,11 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
         {/* プリセット */}
         <div>
           <label className="block text-sm text-gray-300 mb-2">プリセット</label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {([
               ["education", "📚 教育系"],
               ["entertainment", "🎬 エンタメ"],
+              ["tight", "⚡ ぎっしり"],
               ["news", "📰 ニュース"],
             ] as const).map(([key, label]) => (
               <button
@@ -164,6 +190,68 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
             <span>短い無音も削除</span>
             <span>長い無音のみ削除</span>
           </div>
+        </div>
+
+        {/* 前後padding（有音区間の前後保護） */}
+        <div>
+          <label className="block text-sm text-gray-300 mb-1">
+            前後の余白: {(settings.voice_padding ?? 0.04).toFixed(2)}秒
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={0.2}
+            step={0.01}
+            value={settings.voice_padding ?? 0.04}
+            onChange={(e) =>
+              setSettings((s) => ({ ...s, voice_padding: Number(e.target.value) }))
+            }
+            className="w-full"
+          />
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>ぎっしり（0）</span>
+            <span>余裕（0.2秒）</span>
+          </div>
+        </div>
+
+        {/* 句読点後の間（テンポカット） */}
+        <div>
+          <label className="block text-sm text-gray-300 mb-1">
+            句読点後の間: 最大 {(settings.tempo_max_pause ?? 0.6).toFixed(2)}秒 → {(settings.tempo_target_pause ?? 0.3).toFixed(2)}秒に短縮
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="range"
+              min={0.2}
+              max={1.5}
+              step={0.05}
+              value={settings.tempo_max_pause ?? 0.6}
+              onChange={(e) =>
+                setSettings((s) => ({ ...s, tempo_max_pause: Number(e.target.value) }))
+              }
+              className="w-full"
+              aria-label="tempo_max_pause"
+            />
+            <input
+              type="range"
+              min={0.1}
+              max={0.8}
+              step={0.05}
+              value={settings.tempo_target_pause ?? 0.3}
+              onChange={(e) =>
+                setSettings((s) => ({ ...s, tempo_target_pause: Number(e.target.value) }))
+              }
+              className="w-full"
+              aria-label="tempo_target_pause"
+            />
+          </div>
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>検出閾値（左）</span>
+            <span>残す間（右）</span>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            AIジャンプカット ON 時のみ有効
+          </p>
         </div>
 
         {/* AIジャンプカットトグル */}

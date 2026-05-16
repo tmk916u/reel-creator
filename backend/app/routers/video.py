@@ -304,7 +304,11 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             })
             fillers = load_fillers()
             filler_cuts = detect_filler_ranges(words, fillers)
-            tempo_cuts = detect_tempo_ranges(words)
+            tempo_cuts = detect_tempo_ranges(
+                words,
+                max_pause=settings.tempo_max_pause,
+                target_pause=settings.tempo_target_pause,
+            )
             restatement_cuts = detect_restatements(words)
             if not restatement_cuts and words:
                 jump_cut_notes.append("言い直し検出はスキップしました（LLM未設定または失敗）")
@@ -317,7 +321,9 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 extra_cuts = snap_silences_to_word_boundaries(extra_cuts, words)
 
         voice_segments = compute_voice_segments(
-            silences, original_duration, extra_cuts=extra_cuts,
+            silences, original_duration,
+            padding=settings.voice_padding,
+            extra_cuts=extra_cuts,
         )
 
         if not voice_segments:

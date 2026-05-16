@@ -17,6 +17,9 @@ export interface TranscriptSegment {
 export interface ProcessSettings {
   silence_threshold: number;
   min_silence_duration: number;
+  voice_padding?: number;
+  tempo_max_pause?: number;
+  tempo_target_pause?: number;
   enable_subtitles: boolean;
   enable_jump_cut?: boolean;
   enable_buzz_mode?: boolean;
