@@ -57,15 +57,30 @@ def detect_silence(audio_path: str, threshold: float = -30.0, min_duration: floa
     return silences
 
 
-def _build_cut_concat_filter(segments: list[dict], audio_fade: float = 0.08) -> str:
+def _build_cut_concat_filter(
+    segments: list[dict],
+    audio_fade: float = 0.08,
+    target_width: int = 1080,
+    target_height: int = 1920,
+    fps: int = 30,
+) -> str:
     """cut_and_concat 用の filter_complex 文字列を組み立てる。
 
-    各セグメントの音声に先頭・末尾フェードを掛け（境界のクリック軽減）、
-    最後に concat フィルタで結合する。seg_dur < 3*audio_fade のときは
-    フェード長を dur/3 にクランプする。seg_dur=0 はフェードなし。
+    各セグメントを scale+pad で target サイズに揃え、音声に短い fade を掛け、
+    最後に concat フィルタで結合する。concat 出力には fps を明示し、
+    libx264 の MB rate 検出が縦動画の displaymatrix で暴走するのを防ぐ。
+
+    seg_dur < 3*audio_fade のときフェード長を dur/3 にクランプ、
+    seg_dur=0 はフェードなし。
     """
     parts: list[str] = []
     concat_labels: list[str] = []
+    # 解像度を揃えるための共通 video filter（scale + pad で 9:16 中央配置）
+    vf_resize = (
+        f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,"
+        f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"setsar=1"
+    )
     for i, seg in enumerate(segments):
         start = float(seg["start"])
         end = float(seg["end"])
@@ -75,7 +90,7 @@ def _build_cut_concat_filter(segments: list[dict], audio_fade: float = 0.08) -> 
 
         parts.append(
             f"[0:v]trim=start={start:.3f}:end={end:.3f},"
-            f"setpts=PTS-STARTPTS[v{i}]"
+            f"setpts=PTS-STARTPTS,{vf_resize}[v{i}]"
         )
         if fade_d > 0:
             parts.append(
@@ -91,7 +106,9 @@ def _build_cut_concat_filter(segments: list[dict], audio_fade: float = 0.08) -> 
             )
         concat_labels.append(f"[v{i}][a{i}]")
     n = len(segments)
-    parts.append(f"{''.join(concat_labels)}concat=n={n}:v=1:a=1[outv][outa]")
+    # concat 後に fps を明示。これで libx264 が level/MB rate 計算で誤計算するのを防ぐ
+    parts.append(f"{''.join(concat_labels)}concat=n={n}:v=1:a=1[vcat][outa]")
+    parts.append(f"[vcat]fps={fps}[outv]")
     return ";".join(parts)
 
 
@@ -100,27 +117,36 @@ def cut_and_concat(
     segments: list[dict],
     output_path: str,
     audio_fade: float = 0.08,
+    target_width: int = 1080,
+    target_height: int = 1920,
+    fps: int = 30,
 ) -> str:
-    """有音セグメントをカットして結合。
+    """有音セグメントをカットして結合（リール解像度 1080x1920 にダウンスケール）。
 
-    filter_complex の trim + atrim + concat を 1 パスの ffmpeg で実行する
-    （旧実装は N セグメント × N 回の libx264 再エンコードで律速していた）。
+    filter_complex の trim + atrim + concat を 1 パスの ffmpeg で実行する。
+    4K 入力をそのまま処理するとメモリ消費が爆発し OOM でクラッシュするため、
+    最終出力サイズに揃えてからエンコードする（リール用 1080x1920 既定）。
     """
     if not segments:
         raise ValueError("No segments to concatenate")
 
-    filter_complex = _build_cut_concat_filter(segments, audio_fade)
+    filter_complex = _build_cut_concat_filter(
+        segments, audio_fade, target_width, target_height, fps,
+    )
     cmd = [
         "ffmpeg", "-y", "-i", video_path,
         "-filter_complex", filter_complex,
         "-map", "[outv]", "-map", "[outa]",
         "-c:v", "libx264", "-preset", "fast",
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg cut_and_concat failed: {result.stderr}")
+        # stderr が巨大なので末尾だけ抜粋して例外メッセージに（先頭は ffmpeg バナーで情報が薄い）
+        tail = "\n".join((result.stderr or "").splitlines()[-30:])
+        raise RuntimeError(f"ffmpeg cut_and_concat failed:\n{tail}")
     return output_path
 
 
