@@ -53,6 +53,35 @@ def _font_size_to_px(size: FontSize) -> int:
     return {"small": 16, "medium": 22, "large": 30}[size.value]
 
 
+def _merge_word_streams(
+    primary: list[dict],
+    secondary: list[dict],
+    near_threshold: float = 0.3,
+) -> list[dict]:
+    """2 つの word ストリーム(1段目/2段目 ASR)を時刻順にマージする。
+
+    どちらか一方の ASR が認識ミスした発話を、もう一方で補完するための統合。
+    近接する word(start 差が near_threshold 秒以内)は重複とみなし、primary を優先。
+    """
+    if not primary and not secondary:
+        return []
+    if not secondary:
+        return list(primary)
+    if not primary:
+        return list(secondary)
+
+    merged = list(primary) + list(secondary)
+    merged.sort(key=lambda w: w["start"])
+
+    out: list[dict] = []
+    for w in merged:
+        if out and abs(w["start"] - out[-1]["start"]) < near_threshold:
+            # 重複/近接: より先に追加された方(primary 由来)を採用、 secondary は捨てる
+            continue
+        out.append(w)
+    return out
+
+
 def _filter_words_by_segments(words: list[dict], segments: list[dict]) -> list[dict]:
     """元時刻の words を、voice_segments を結合したカット後動画の累積時刻に変換する。
 
@@ -538,8 +567,22 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                             final_output = cut2_output
                             processed_duration = get_video_duration(cut2_output)
                             words_cut = _filter_words_by_segments(words_cut, cut2_voices)
+                            # 1段目 words も cut2 時刻に二段 remap (元時刻 → cut.mp4 → cut2)
+                            if words_in_cut_1st:
+                                words_in_cut_1st = _filter_words_by_segments(
+                                    words_in_cut_1st, cut2_voices,
+                                )
 
-                if words_cut:
+                # 字幕用 words のマージ: 1段目+2段目を時刻順にマージし、近接の重複を dedup
+                # 「動画は残ったが字幕が出ない」現象を防ぐ
+                # (どちらか一方の ASR でも認識できた発話は字幕に反映する)
+                subtitle_words = _merge_word_streams(words_cut, words_in_cut_1st)
+
+                if subtitle_words:
+                    sub_segments = words_to_segments(
+                        subtitle_words, max_chars=settings.subtitle_max_chars,
+                    )
+                elif words_cut:
                     sub_segments = words_to_segments(
                         words_cut, max_chars=settings.subtitle_max_chars,
                     )
