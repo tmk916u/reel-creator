@@ -457,6 +457,26 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                         words_cut,
                         max_word_duration=settings.max_word_duration,
                     )
+                    # 施策G: ASR が word を一つも検出しなかった「冒頭・末尾の無発話」を削除
+                    # VAD/silencedetect が拾えない呼吸音・環境音などが残るケースに対処
+                    cut_duration_pre = get_video_duration(cut_output)
+                    leading_threshold = 1.0  # 1秒以上の無発話プレフィックスは削除
+                    trailing_threshold = 1.0
+                    if words_cut[0]["start"] > leading_threshold:
+                        cut_end = max(0.0, words_cut[0]["start"] - 0.2)
+                        if cut_end > 0.05:
+                            oversized_2nd.append({"start": 0.0, "end": cut_end})
+                            logger.info(
+                                "冒頭無発話: 0.0-%.2fs を削除候補に追加", cut_end,
+                            )
+                    if words_cut[-1]["end"] < cut_duration_pre - trailing_threshold:
+                        cut_start = words_cut[-1]["end"] + 0.2
+                        if cut_duration_pre - cut_start > 0.05:
+                            oversized_2nd.append({"start": cut_start, "end": cut_duration_pre})
+                            logger.info(
+                                "末尾無発話: %.2f-%.2fs を削除候補に追加",
+                                cut_start, cut_duration_pre,
+                            )
                     if oversized_2nd:
                         total = sum(c["end"] - c["start"] for c in oversized_2nd)
                         logger.info(
