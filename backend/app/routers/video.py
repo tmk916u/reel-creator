@@ -461,8 +461,16 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                     # VAD/silencedetect が拾えない呼吸音・環境音などが残るケースに対処
                     # 施策G の発動条件:
                     # 最初/最後の word が「通常 word」(duration < max_word_duration) の時のみ。
-                    # word が oversized(中に長い沈黙が埋もれている)の場合は施策F が処理するため、
-                    # 施策G で巻き込みカットすると実発話が消える(reel_fa362668 で発生)。
+                    # word が oversized(中に長い沈黙が埋もれている)の場合は施策F が処理する。
+                    #
+                    # 削除幅の上限(LEADING/TRAILING_MAX_TRIM):
+                    # 施策G は「VAD/silencedetect が取りこぼした数秒の呼吸音・環境音」を
+                    # 消す用途。それ以上長い「無発話」は本当は ReazonSpeech の認識ミスで
+                    # 発話が word に変換されなかっただけの可能性があり、削除すると実発話が
+                    # 消える(reel_19e6303c で 58秒削除して「お客様が悩まれているダイエット」
+                    # を失った事例)。本当に長い無音は Stage 2 で既に削除されているはず。
+                    LEADING_MAX_TRIM = 5.0
+                    TRAILING_MAX_TRIM = 5.0
                     cut_duration_pre = get_video_duration(cut_output)
                     leading_threshold = 1.0
                     trailing_threshold = 1.0
@@ -471,11 +479,17 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                     first_is_normal = first_dur <= settings.max_word_duration
                     last_is_normal = last_dur <= settings.max_word_duration
                     if first_is_normal and words_cut[0]["start"] > leading_threshold:
-                        cut_end = max(0.0, words_cut[0]["start"] - 0.2)
-                        if cut_end > 0.05:
-                            oversized_2nd.append({"start": 0.0, "end": cut_end})
+                        proposed_end = max(0.0, words_cut[0]["start"] - 0.2)
+                        clamped_end = min(proposed_end, LEADING_MAX_TRIM)
+                        if proposed_end > LEADING_MAX_TRIM:
                             logger.info(
-                                "冒頭無発話: 0.0-%.2fs を削除候補に追加", cut_end,
+                                "冒頭無発話: words_cut[0].start=%.2fs だが上限 %.1fs で制限",
+                                words_cut[0]["start"], LEADING_MAX_TRIM,
+                            )
+                        if clamped_end > 0.05:
+                            oversized_2nd.append({"start": 0.0, "end": clamped_end})
+                            logger.info(
+                                "冒頭無発話: 0.0-%.2fs を削除候補に追加", clamped_end,
                             )
                     elif not first_is_normal:
                         logger.info(
@@ -483,12 +497,19 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                             first_dur,
                         )
                     if last_is_normal and words_cut[-1]["end"] < cut_duration_pre - trailing_threshold:
-                        cut_start = words_cut[-1]["end"] + 0.2
-                        if cut_duration_pre - cut_start > 0.05:
-                            oversized_2nd.append({"start": cut_start, "end": cut_duration_pre})
+                        proposed_start = words_cut[-1]["end"] + 0.2
+                        max_trail = cut_duration_pre - TRAILING_MAX_TRIM
+                        clamped_start = max(proposed_start, max_trail)
+                        if proposed_start < max_trail:
+                            logger.info(
+                                "末尾無発話: 削除幅が上限 %.1fs を超えるため制限",
+                                TRAILING_MAX_TRIM,
+                            )
+                        if cut_duration_pre - clamped_start > 0.05:
+                            oversized_2nd.append({"start": clamped_start, "end": cut_duration_pre})
                             logger.info(
                                 "末尾無発話: %.2f-%.2fs を削除候補に追加",
-                                cut_start, cut_duration_pre,
+                                clamped_start, cut_duration_pre,
                             )
                     elif not last_is_normal:
                         logger.info(
