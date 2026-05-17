@@ -52,11 +52,16 @@ def _font_size_to_px(size: FontSize) -> int:
 
 
 def _filter_words_by_segments(words: list[dict], segments: list[dict]) -> list[dict]:
-    """元時刻の words から、voice_segments に**完全に含まれる** word だけ残し、
-    カット後動画の累積時刻に変換する。
+    """元時刻の words を、voice_segments を結合したカット後動画の累積時刻に変換する。
 
-    境界を跨ぐ word は除外（中途半端な時刻で字幕の表示時間が 0.09 秒のような
-    異常値になるのを防ぐ）。is_word_start などの補助メタデータは保持する。
+    word の **開始点 (start) が voice_segment 内にある** word を採用し、
+    word.end が segment 末尾を越える場合は segment_end でクランプする。
+    こうすることで、施策F (2段目 oversized カット) で word の中央部だけ
+    削除されたケース(例: 「整」word の duration 1.76秒のうち中央を削除)
+    でも word の text を字幕に残せる。
+
+    元実装は「完全包含」だったため、oversized word が削除されると
+    word.text ごと失われ、字幕の冒頭文字が消える事象が発生していた。
     """
     if not words or not segments:
         return []
@@ -65,10 +70,14 @@ def _filter_words_by_segments(words: list[dict], segments: list[dict]) -> list[d
     for seg in segments:
         seg_start, seg_end = seg["start"], seg["end"]
         for w in words:
-            if w["start"] >= seg_start and w["end"] <= seg_end:
+            if seg_start <= w["start"] < seg_end:
+                w_end_clamped = min(w["end"], seg_end)
+                # 最低 0.05 秒は表示時間を確保(0 秒 word を防ぐ)
+                if w_end_clamped <= w["start"]:
+                    w_end_clamped = min(w["start"] + 0.05, seg_end)
                 new_w = {
                     "start": offset + (w["start"] - seg_start),
-                    "end": offset + (w["end"] - seg_start),
+                    "end": offset + (w_end_clamped - seg_start),
                     "text": w["text"],
                 }
                 if "is_word_start" in w:
