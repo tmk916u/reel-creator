@@ -2,9 +2,9 @@
 
 ### Requirement: 項目#5 字幕の誤認識の少なさ
 
-出力字幕の文字列(誤認識 + 語順崩壊)は **1 動画あたり 0〜1 個** に抑えなければならない。 特に **subword レベルの語順崩壊** (例:「様が悩まれているダイエットお客」のような順序乱れ) は **発生してはならない**。
+出力字幕の誤認識(誤認識 + 語順崩壊)は 1 動画あたり 0〜1 個に抑えられること(SHALL)。 特に subword レベルの語順崩壊(例:「様が悩まれているダイエットお客」のような順序乱れ)は **MUST NOT** 発生してはならない。
 
-字幕用 words は **cut2.mp4(または施策F 未発動時は cut.mp4)を直接 transcribe** したものを使うこと。1段目 transcribe (元動画) の word を `_filter_words_by_segments` で 2 段 remap した結果を字幕に使ってはならない(過去にこの構成で語順崩壊が確認された)。
+字幕用 words は cut2.mp4(または施策F 未発動時は cut.mp4)を直接 transcribe したものを使うこと(SHALL)。 1段目 transcribe (元動画) の word を `_filter_words_by_segments` で 2 段 remap した結果を字幕に使うのは **MUST NOT** (過去にこの構成で語順崩壊が確認された)。
 
 #### Scenario: 誤認識率の目視判定
 - **WHEN** テスト動画の出力字幕を目視確認
@@ -20,7 +20,7 @@
 
 ### Requirement: 項目#6 字幕タイミング同期
 
-字幕の表示時刻と音声の発話時刻のずれは **0.5 秒未満** でなければならない。 字幕用 words は **cut2.mp4 内時刻空間で生成** されており、 remap による時刻ねじれを発生させない。
+字幕の表示時刻と音声の発話時刻のずれは 0.5 秒未満でなければならない (SHALL)。 字幕用 words は cut2.mp4 内時刻空間で生成され、 remap による時刻ねじれを発生させてはならない (MUST NOT)。
 
 #### Scenario: 同期計測
 - **WHEN** ASS の Dialogue 開始時刻と、 同じ word の word.start を比較
@@ -34,7 +34,7 @@
 
 ### Requirement: Stage 5b として cut2.mp4 を 3 段目 transcribe する
 
-`_run_processing` の Stage 5 を 2 段(5a/5b)に分割し、 5b では cut2.mp4 を独立した audio として抽出した上で transcribe_with_words に流す。
+`_run_processing` の Stage 5 を 2 段(5a/5b)に分割し、 5b では cut2.mp4 を独立した audio として抽出した上で transcribe_with_words に流すこと (SHALL)。
 
 #### Scenario: 3 段目 transcribe の実行
 - **WHEN** 施策F が発動して cut2.mp4 が生成された
