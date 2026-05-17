@@ -3,6 +3,7 @@ from app.services.ffmpeg import (
     get_video_duration,
     extract_audio,
     _build_cut_concat_filter,
+    _fit_overlay_text,
 )
 
 
@@ -79,3 +80,46 @@ def test_build_cut_concat_filter_uses_input_zero_for_all_segments():
     # 中間ファイルや別 input は参照されない
     assert "[1:" not in f
     assert "[2:" not in f
+
+
+def test_fit_overlay_text_short_keeps_base_size():
+    """短いテキストはそのまま base_size で 1 行"""
+    wrapped, size = _fit_overlay_text("短い", base_size=80)
+    assert wrapped == "短い"
+    assert size == 80
+
+
+def test_fit_overlay_text_long_wraps_to_two_lines():
+    """長いテキストは句読点位置で 2 行に折返し、フォントを縮める"""
+    wrapped, size = _fit_overlay_text("痛みの原因は筋肉ではなく、血流だった", base_size=80)
+    assert "\n" in wrapped
+    line1, line2 = wrapped.split("\n", 1)
+    # 句読点「、」の直後で改行されている
+    assert line1.endswith("、")
+    assert line2 == "血流だった"
+    # フォントは縮められている (80→75 程度)
+    assert size < 80
+    assert size >= 40  # min_size 以上
+
+
+def test_fit_overlay_text_break_priority_punctuation_over_particle():
+    """句読点があれば助詞より優先して使う"""
+    wrapped, _ = _fit_overlay_text("これはとても、長いテキストです", base_size=80)
+    # 「、」で切れる
+    assert wrapped.split("\n", 1)[0].endswith("、")
+
+
+def test_fit_overlay_text_no_breaker_falls_back_to_middle():
+    """区切り文字が無い場合は中央で分割"""
+    text = "ABCDEFGHIJKLMNOP"  # 16文字、区切りなし
+    wrapped, size = _fit_overlay_text(text, base_size=80, max_chars_per_line=8)
+    assert "\n" in wrapped
+    line1, line2 = wrapped.split("\n", 1)
+    assert len(line1) + len(line2) == len(text)
+
+
+def test_fit_overlay_text_min_size_respected():
+    """極端に長いテキストでも min_size を下回らない"""
+    text = "あ" * 100
+    _, size = _fit_overlay_text(text, base_size=80, min_size=40)
+    assert size >= 40

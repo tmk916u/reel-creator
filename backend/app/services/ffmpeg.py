@@ -492,6 +492,69 @@ def mix_sfx_at_cuts(
 _CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
 
 
+def _fit_overlay_text(
+    text: str,
+    base_size: int,
+    max_width_px: int = 980,
+    min_size: int = 40,
+    max_chars_per_line: int = 14,
+) -> tuple[str, int]:
+    """オーバーレイテキスト(hook/cta)を画面幅に収めるため、必要に応じて
+    改行を挿入し font_size を縮める。
+
+    - text が 1 行で max_width_px に収まれば、base_size のまま 1 行
+    - 縮めれば 1 行で収まる場合、font_size を縮めて 1 行
+    - それでも収まらない場合、自然な助詞・句読点位置で 2 行に分割
+
+    日本語フォントは「1文字 ≒ font_size px」と近似(等幅でないが目安)。
+
+    Returns:
+        (wrapped_text, effective_font_size)
+    """
+    text = text.strip()
+    if not text:
+        return text, base_size
+
+    # 1 行のままで base_size を維持できるか
+    if base_size * len(text) <= max_width_px and len(text) <= max_chars_per_line:
+        return text, base_size
+
+    # 1 行で font_size を縮めれば収まるか(短いテキストはこちら)
+    if len(text) <= max_chars_per_line:
+        new_size = max(min_size, max_width_px // max(1, len(text)))
+        return text, min(base_size, new_size)
+
+    # 2 行に分割。「、」「。」のような自然な区切りで分けたい
+    breakers = set("、。！？!?,.")
+    soft_breakers = set("はがをにでとのもからまでへやかな")
+    mid = len(text) // 2
+    best = None
+    best_dist = len(text)
+    # 強い区切り(句読点)を優先
+    for i in range(1, len(text)):
+        if text[i - 1] in breakers:
+            d = abs(i - mid)
+            if d < best_dist:
+                best = i
+                best_dist = d
+    # 句読点が無ければ助詞でも可
+    if best is None:
+        for i in range(1, len(text)):
+            if text[i - 1] in soft_breakers:
+                d = abs(i - mid)
+                if d < best_dist:
+                    best = i
+                    best_dist = d
+    if best is None:
+        best = mid
+
+    line1 = text[:best]
+    line2 = text[best:]
+    longest = max(len(line1), len(line2))
+    new_size = max(min_size, min(base_size, max_width_px // max(1, longest)))
+    return f"{line1}\n{line2}", new_size
+
+
 def apply_pipeline_combined(
     input_video: str,
     output_video: str,
@@ -569,10 +632,11 @@ def apply_pipeline_combined(
     # 冒頭フック
     if hook_text and hook_text.strip():
         hook_file = workdir / "hook.txt"
-        hook_file.write_text(hook_text, encoding="utf-8")
+        wrapped_hook, hook_size = _fit_overlay_text(hook_text, hook_font_size)
+        hook_file.write_text(wrapped_hook, encoding="utf-8")
         video_filters.append(
             f"drawtext=textfile={hook_file}"
-            f":fontfile={font_file}:fontsize={hook_font_size}"
+            f":fontfile={font_file}:fontsize={hook_size}"
             f":fontcolor=white:box=1:boxcolor=black@0.8:boxborderw=30"
             f":x=(w-text_w)/2:y=h*0.18"
             f":enable='lt(t\\,{hook_duration:.3f})'"
@@ -581,18 +645,19 @@ def apply_pipeline_combined(
     # 末尾CTA（点滅）
     if cta_text and cta_text.strip():
         cta_file = workdir / "cta.txt"
-        cta_file.write_text(cta_text, encoding="utf-8")
+        wrapped_cta, cta_size = _fit_overlay_text(cta_text, cta_font_size)
+        cta_file.write_text(wrapped_cta, encoding="utf-8")
         cta_start = max(0.0, total_dur - cta_duration)
         video_filters.append(
             f"drawtext=textfile={cta_file}"
-            f":fontfile={font_file}:fontsize={cta_font_size}"
+            f":fontfile={font_file}:fontsize={cta_size}"
             f":fontcolor=black:box=1:boxcolor=black@0.9:boxborderw=35"
             f":x=(w-text_w)/2:y=h*0.42"
             f":enable='gt(t\\,{cta_start:.3f})'"
         )
         video_filters.append(
             f"drawtext=textfile={cta_file}"
-            f":fontfile={font_file}:fontsize={cta_font_size}"
+            f":fontfile={font_file}:fontsize={cta_size}"
             f":fontcolor=yellow:borderw=4:bordercolor=black"
             f":x=(w-text_w)/2:y=h*0.42"
             f":alpha='if(gt(t\\,{cta_start:.3f})\\,if(eq(mod(floor((t-{cta_start:.3f})*2)\\,2)\\,0)\\,1\\,0.5)\\,0)'"
