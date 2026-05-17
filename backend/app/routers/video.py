@@ -436,6 +436,38 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 )
                 if corrections and words_cut:
                     words_cut = apply_corrections_to_words(words_cut, corrections)
+
+                # 施策F: 2 段目 oversized カット
+                # cut.mp4 を再 transcribe すると、元 transcribe では現れなかった
+                # 「長い word に埋もれる沈黙」が新たに見つかることがある。
+                # これを再カットして cut2.mp4 を生成し、字幕も再マッピングする。
+                if settings.enable_jump_cut and words_cut:
+                    oversized_2nd = detect_oversized_words(
+                        words_cut,
+                        max_word_duration=settings.max_word_duration,
+                    )
+                    if oversized_2nd:
+                        total = sum(c["end"] - c["start"] for c in oversized_2nd)
+                        logger.info(
+                            "2段目 oversized: %d 箇所 %.1fs を削除",
+                            len(oversized_2nd), total,
+                        )
+                        cut_duration = get_video_duration(cut_output)
+                        cut2_voices = compute_voice_segments(
+                            silences=[],  # cut.mp4 にはもう silence は無いはず
+                            total_duration=cut_duration,
+                            padding=settings.voice_padding,
+                            extra_cuts=oversized_2nd,
+                        )
+                        if cut2_voices:
+                            cut2_output = str(job_dir / "cut2.mp4")
+                            cut_and_concat(cut_output, cut2_voices, cut2_output)
+                            # 動画ファイルとパスを差し替え、字幕用 words も再マッピング
+                            cut_output = cut2_output
+                            final_output = cut2_output
+                            processed_duration = get_video_duration(cut2_output)
+                            words_cut = _filter_words_by_segments(words_cut, cut2_voices)
+
                 if words_cut:
                     sub_segments = words_to_segments(
                         words_cut, max_chars=settings.subtitle_max_chars,
