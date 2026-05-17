@@ -139,3 +139,60 @@ def test_stage5b_falls_back_to_second_transcribe_when_no_oversized_2nd(tmp_path,
     assert m_trans.call_count == 2
     audios = [c[0][0] for c in m_trans.call_args_list]
     assert all(not a.endswith("cut2_audio.wav") for a in audios)
+
+
+def test_hybrid_prepend_when_third_stage_misses_leading():
+    """3段目 first_word.start が動画長 × 0.05(最低 2 秒)を超えると、 1段目補完を prepend する。"""
+    from app.routers.video import _hybrid_prepend_leading_words
+
+    third = [{"start": 30.0, "end": 30.3, "text": "目"}]
+    first_in_target = [
+        {"start": 5.0, "end": 5.3, "text": "客"},
+        {"start": 5.4, "end": 5.7, "text": "様"},
+    ]
+    out, prepended = _hybrid_prepend_leading_words(
+        third_words=third,
+        first_stage_words_in_target=first_in_target,
+        target_duration=100.0,
+    )
+    assert prepended == 2
+    assert out[0]["text"] == "客"
+    assert out[1]["text"] == "様"
+    assert out[2]["text"] == "目"
+
+
+def test_hybrid_no_prepend_when_third_stage_recognizes_leading():
+    """3段目 first_word.start が閾値以下なら、 補完しない。"""
+    from app.routers.video import _hybrid_prepend_leading_words
+
+    third = [{"start": 0.5, "end": 0.8, "text": "客"}]
+    first_in_target = [{"start": 0.2, "end": 0.4, "text": "お"}]
+    out, prepended = _hybrid_prepend_leading_words(
+        third_words=third,
+        first_stage_words_in_target=first_in_target,
+        target_duration=100.0,
+    )
+    assert prepended == 0
+    assert out == third
+
+
+def test_hybrid_prepend_respects_margin_and_sorts():
+    """補完範囲は first_3rd_start - margin より前まで、 prepend 後は start で sort。"""
+    from app.routers.video import _hybrid_prepend_leading_words
+
+    third = [{"start": 30.0, "end": 30.3, "text": "目"}]
+    # margin=0.1 で cutoff=29.9。 word.end 29.95 はギリギリ補完対象外
+    first_in_target = [
+        {"start": 5.4, "end": 5.7, "text": "様"},
+        {"start": 5.0, "end": 5.3, "text": "客"},  # 順序が逆でも sort される
+        {"start": 29.5, "end": 29.95, "text": "後"},  # end が cutoff 29.9 を越えるので除外
+    ]
+    out, prepended = _hybrid_prepend_leading_words(
+        third_words=third,
+        first_stage_words_in_target=first_in_target,
+        target_duration=100.0,
+    )
+    assert prepended == 2
+    assert out[0]["text"] == "客"
+    assert out[1]["text"] == "様"
+    assert out[2]["text"] == "目"
