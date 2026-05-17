@@ -61,9 +61,9 @@ def words_to_segments(
     # 単語境界が一向に来ない場合の絶対上限（SentencePiece マーカーが希薄な
     # ReazonSpeech 出力で is_word_start=False が連続して flush されないのを防ぐ）
     hard_limit = max(int(max_chars * 1.5), max_chars + 4)
-    # 単一文字の格助詞: この直後で flush すると「〜は/〜が/〜を」で文が
-    # 途切れて見えるので、できる限り次の語まで持ち越す
-    _trailing_particles = set("はがをにでとのもへやかな")
+    # 単一文字の格助詞・接続助詞・活用語尾: この直後で flush すると
+    # 「〜は/〜が/〜て/〜ば」 で文が途切れて見えるので、 できる限り次の語まで持ち越す
+    _trailing_particles = set("はがをにでとのもへやかなてばしず")
     for i, w in enumerate(words):
         text = w["text"]
         gap = w["start"] - current_words[-1]["end"] if current_words else 0.0
@@ -91,7 +91,9 @@ def words_to_segments(
         current_words.append(w)
         current_text += text
 
-        if text and text[-1] in "、。！？!?.":
+        # 「、」 では flush しない (短い断片を量産する原因のため)。
+        # 文末記号 (。！？!?.) のみで flush する。
+        if text and text[-1] in "。！？!?.":
             flush()
             current_words = []
             current_text = ""
@@ -101,8 +103,13 @@ def words_to_segments(
 
     # 隣接セグメント間の重複テキスト除去（Whisperチャンク境界での再記述を解消）
     segments = _dedupe_adjacent_overlaps(segments)
-    # 短すぎるセグメントを次の/前のセグメントに統合（ぶつ切り感の解消）
-    segments = _merge_short_segments(segments, min_dur=0.6, max_chars=max(max_chars, 24))
+    # 短すぎるセグメントを次の/前のセグメントに統合（ぶつ切り感の解消 + #8 文字数比率改善）
+    segments = _merge_short_segments(
+        segments,
+        min_dur=0.6,
+        min_chars=8,
+        max_chars=max(int(max_chars * 1.4), 14),
+    )
 
     # 視認性向上: lead_time だけ前倒し / tail_time だけ後ろに伸ばす
     # ただし隣のセグメントと被らないよう調整
@@ -177,14 +184,17 @@ def _dedupe_adjacent_overlaps(segments: list[dict]) -> list[dict]:
 def _merge_short_segments(
     segments: list[dict],
     min_dur: float = 0.6,
+    min_chars: int = 8,
     max_chars: int = 24,
 ) -> list[dict]:
     """短すぎる/フラグメント的なセグメントを隣のセグメントに統合する。
 
-    3パターンで統合判定:
-    1. 両方が短時間 (<min_dur) + 合計が短い + 近い → 統合
-    2. どちらかが極端に短い文字数 (<5文字) + 合計が読める長さ + 大きすぎないギャップ → 統合
-    3. 前段が句読点で終わっている場合は統合しない（文の区切り尊重）
+    統合判定:
+    1. 前段が句点で終わっていれば統合しない (文の区切り尊重)
+    2. どちらかが min_chars 未満 (短すぎる) + 合計 ≤ max_chars + ギャップ < 3 秒 → 統合
+    3. 両方が短時間 (<min_dur) + 合計 ≤ max_chars + ギャップ < 0.8 秒 → 統合
+
+    min_chars と max_chars は呼出側で max_chars × 1.4 のような上限制御で渡される。
     """
     if len(segments) < 2:
         return segments
@@ -198,18 +208,18 @@ def _merge_short_segments(
         combined_len = len(prev_text) + len(cur_text)
         gap = seg["start"] - prev["end"]
 
-        # 前段が句読点で終わっていれば文の終わり → 統合しない
-        prev_ends_with_punct = prev_text and prev_text[-1] in "、。！？!?."
+        # 前段が句点 (。！？!?.) で終わっていれば文の終わり → 統合しない
+        # 「、」 は文の中の区切りなので統合可能とする
+        prev_ends_with_sentence_end = prev_text and prev_text[-1] in "。！？!?."
 
-        either_tiny = len(prev_text) < 5 or len(cur_text) < 5
-        both_short = prev_dur < min_dur and cur_dur < min_dur
+        either_short = len(prev_text) < min_chars or len(cur_text) < min_chars
+        both_short_dur = prev_dur < min_dur and cur_dur < min_dur
 
         should_merge = False
-        if not prev_ends_with_punct:
-            if both_short and combined_len <= max_chars and gap < 0.8:
+        if not prev_ends_with_sentence_end and combined_len <= max_chars:
+            if both_short_dur and gap < 0.8:
                 should_merge = True
-            elif either_tiny and combined_len <= 30 and gap < 3.0:
-                # フラグメント（1〜4文字）は3秒以内のギャップなら統合
+            elif either_short and gap < 3.0:
                 should_merge = True
 
         if should_merge:

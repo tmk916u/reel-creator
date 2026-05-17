@@ -151,7 +151,10 @@ def test_apply_keyword_highlight_no_keywords():
 
 
 def test_words_to_segments_respects_word_start_boundary():
-    """is_word_start=False の subword 連続は、次の word_start で flush される"""
+    """is_word_start=False の subword 連続は、次の word_start で flush される。
+
+    短いセグメントの統合を抑制するため、 2 セグメントの間に 3 秒以上のギャップを置く。
+    """
     words = [
         # 「今日はとても」(6文字、1単語扱い)
         {"start": 0.0, "end": 0.2, "text": "今日", "is_word_start": True},
@@ -161,10 +164,10 @@ def test_words_to_segments_respects_word_start_boundary():
         # 「暑い」(2文字)
         {"start": 0.8, "end": 1.0, "text": "暑", "is_word_start": True},
         {"start": 1.0, "end": 1.2, "text": "い", "is_word_start": False},
-        # 「夏が」(2文字)— ここで max_chars 超過 + is_word_start=True → flush
-        {"start": 1.2, "end": 2.0, "text": "夏が", "is_word_start": True},
+        # 「夏が」(2文字)— 3 秒以上のギャップで統合を抑制
+        {"start": 4.5, "end": 5.0, "text": "夏が", "is_word_start": True},
         # 「好きです」(4文字)
-        {"start": 2.0, "end": 5.0, "text": "好きです", "is_word_start": True},
+        {"start": 5.0, "end": 7.0, "text": "好きです", "is_word_start": True},
     ]
     segments = words_to_segments(words, max_chars=8, lead_time=0, tail_time=0)
     # 単語の真ん中で切れず、「暑い」までで 8 文字に到達 → 次の word_start "夏が" で flush
@@ -210,9 +213,81 @@ def test_words_to_segments_no_is_word_start_uses_default_true():
     words = [
         {"start": 0.0, "end": 1.0, "text": "今日はとても"},
         {"start": 1.0, "end": 2.0, "text": "暑い"},
-        {"start": 2.0, "end": 5.0, "text": "夏ですよね"},
+        # 3 秒以上のギャップで _merge_short_segments による統合を抑制
+        {"start": 5.5, "end": 8.0, "text": "夏ですよね"},
     ]
     segments = words_to_segments(words, max_chars=8, lead_time=0, tail_time=0)
     # "暑い"までで 8 文字ちょうど。"夏ですよね" 追加で 13 文字超過 → flush
     assert segments[0]["text"] == "今日はとても暑い"
     assert segments[1]["text"] == "夏ですよね"
+
+
+def test_words_to_segments_does_not_flush_on_touten():
+    """「、」 では flush しない (短い断片を量産する原因のため)。"""
+    words = [
+        {"start": 0.0, "end": 0.3, "text": "ただ、", "is_word_start": True},
+        {"start": 0.3, "end": 0.6, "text": "それは", "is_word_start": True},
+        {"start": 0.6, "end": 1.0, "text": "悪い", "is_word_start": True},
+        {"start": 1.0, "end": 1.4, "text": "ことでは", "is_word_start": True},
+        {"start": 1.4, "end": 1.8, "text": "ありません。", "is_word_start": True},
+    ]
+    segments = words_to_segments(words, max_chars=20, lead_time=0, tail_time=0)
+    # 「、」 で flush せず、 句点「。」 で 1 つの Dialogue になる
+    assert len(segments) == 1
+    assert segments[0]["text"] == "ただ、それは悪いことではありません。"
+
+
+def test_words_to_segments_holds_connective_particle_te():
+    """接続助詞「て」 末尾でも flush 抑制 (max_chars 超過時は次の word まで持ち越し)。"""
+    words = [
+        # 「あって」(3文字、末尾「て」)。 max_chars=4 を超えるが「て」 抑制で flush しない
+        {"start": 0.0, "end": 0.3, "text": "あ", "is_word_start": True},
+        {"start": 0.3, "end": 0.6, "text": "って", "is_word_start": False},
+        # 次の word 「次へ」 (2 文字)、 is_word_start=True、 over_chars だが「て」抑制で flush しない
+        {"start": 0.6, "end": 1.0, "text": "次", "is_word_start": True},
+        {"start": 1.0, "end": 1.4, "text": "へ", "is_word_start": False},
+    ]
+    segments = words_to_segments(words, max_chars=4, lead_time=0, tail_time=0)
+    # 「て」抑制で「あって次へ」 が 1 セグメントになる(hard_limit 6 までは持ち越し可)
+    assert len(segments) == 1
+    assert segments[0]["text"] == "あって次へ"
+
+
+def test_merge_short_segments_under_min_chars():
+    """8 文字未満の Dialogue は隣接と統合される(統合後合計 ≤ max_chars × 1.4 まで)。"""
+    from app.services.subtitle import _merge_short_segments
+
+    segments = [
+        {"start": 0.0, "end": 1.0, "text": "短い"},
+        {"start": 1.05, "end": 2.0, "text": "つづき"},
+    ]
+    # min_chars=8、 max_chars=14、 句点なし、 gap < 3.0 → 統合
+    out = _merge_short_segments(segments, min_chars=8, max_chars=14, min_dur=0.6)
+    assert len(out) == 1
+    assert out[0]["text"] == "短いつづき"
+
+
+def test_merge_short_segments_respects_max_chars():
+    """統合候補の合計が max_chars を超える場合は統合しない。"""
+    from app.services.subtitle import _merge_short_segments
+
+    segments = [
+        {"start": 0.0, "end": 1.0, "text": "短いセグメント"},   # 7 文字
+        {"start": 1.05, "end": 2.0, "text": "ながいうしろのほう"},  # 9 文字
+    ]
+    # 合計 16 文字 > max_chars=14 → 統合しない
+    out = _merge_short_segments(segments, min_chars=8, max_chars=14, min_dur=0.6)
+    assert len(out) == 2
+
+
+def test_merge_short_segments_respects_sentence_end():
+    """前段が句点で終わっていれば、 短くても統合しない (文の境界尊重)。"""
+    from app.services.subtitle import _merge_short_segments
+
+    segments = [
+        {"start": 0.0, "end": 1.0, "text": "短い。"},
+        {"start": 1.05, "end": 2.0, "text": "つづき"},
+    ]
+    # 前段が「。」 で終わる → 統合しない
+    out = _merge_short_segments(segments, min_chars=8, max_chars=14, min_dur=0.6)
+    assert len(out) == 2
