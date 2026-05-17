@@ -92,3 +92,50 @@ def test_detect_restatements_negative_range_discarded(monkeypatch):
 def test_extract_json_handles_code_fence():
     raw = '```json\n{"ranges": []}\n```'
     assert llm._extract_json(raw) == {"ranges": []}
+
+
+# === detect_topics retry (retry-empty-topic-detection) ===
+
+def test_detect_topics_retries_when_empty(monkeypatch):
+    """1 回目が 0 件返したら強制分割プロンプトで 1 回リトライする。"""
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy")
+
+    call_count = {"n": 0}
+    prompts_seen: list[str] = []
+
+    def fake_call(text, system_prompt=None):
+        call_count["n"] += 1
+        prompts_seen.append(system_prompt or "")
+        if call_count["n"] == 1:
+            return '{"topics": []}'
+        return '{"topics": [{"index": 1, "start_seg": 0, "label": "導入"}, {"index": 2, "start_seg": 2, "label": "結論"}]}'
+
+    monkeypatch.setattr(llm, "_call_anthropic", fake_call)
+
+    segments = ["最初の話", "途中", "結論部分"]
+    result = llm.detect_topics(segments)
+    assert call_count["n"] == 2  # 1 回目 + リトライ
+    assert len(result) == 2
+    assert result[0]["label"] == "導入"
+    assert result[1]["label"] == "結論"
+    # リトライプロンプトに「必ず最低 2 個」 を含む
+    assert "必ず最低 2 個" in prompts_seen[1] or "必ず 2" in prompts_seen[1]
+
+
+def test_detect_topics_no_retry_when_already_has_results(monkeypatch):
+    """1 回目で 1 件以上返ったらリトライしない。"""
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy")
+
+    call_count = {"n": 0}
+
+    def fake_call(text, system_prompt=None):
+        call_count["n"] += 1
+        return '{"topics": [{"index": 1, "start_seg": 0, "label": "メイン"}]}'
+
+    monkeypatch.setattr(llm, "_call_anthropic", fake_call)
+
+    result = llm.detect_topics(["セグ1", "セグ2"])
+    assert call_count["n"] == 1  # リトライなし
+    assert len(result) == 1

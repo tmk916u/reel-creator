@@ -149,6 +149,43 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
           </p>
         </div>
 
+        {/* 現在の処理モード を明示 */}
+        <div className={`rounded-lg p-3 border ${
+          settings.skip_preview
+            ? "bg-pink-500/10 border-pink-500/40"
+            : "bg-blue-500/10 border-blue-500/40"
+        }`}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex-1">
+              <div className="text-sm font-semibold">
+                {settings.skip_preview ? (
+                  <span className="text-pink-300">⚡ 量産モード (字幕プレビューを飛ばす)</span>
+                ) : (
+                  <span className="text-blue-300">📝 編集モード (字幕プレビューあり)</span>
+                )}
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                {settings.skip_preview
+                  ? "速い処理 (~4分)。 ただし誤認識を手動修正できないので、 投稿前に動画再生でチェックしてください。"
+                  : "推奨。 字幕プレビューで「⚠ 要確認」 の赤字 Dialogue を 5-10 秒チェック・修正できます (合計 ~6分)。"}
+              </p>
+            </div>
+            <button
+              onClick={() =>
+                setSettings((s) => ({ ...s, skip_preview: !s.skip_preview }))
+              }
+              className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                settings.skip_preview
+                  ? "bg-blue-500 hover:bg-blue-400 text-white"
+                  : "bg-pink-500 hover:bg-pink-400 text-white"
+              }`}
+              title="モードを切替"
+            >
+              {settings.skip_preview ? "編集モードに" : "量産モードに"}
+            </button>
+          </div>
+        </div>
+
         <button
           onClick={() => setShowAdvanced((v) => !v)}
           className="text-xs text-gray-400 hover:text-gray-200 underline"
@@ -328,25 +365,6 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
           <p className="text-xs text-gray-500 mt-1">
             AIジャンプカット ON 時のみ有効
           </p>
-        </div>
-
-        {/* 量産モード: 字幕プレビューをスキップ */}
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-gray-300">⚡ 量産モード(字幕プレビューを飛ばす)</span>
-          <button
-            onClick={() =>
-              setSettings((s) => ({ ...s, skip_preview: !s.skip_preview }))
-            }
-            className={`relative w-12 h-6 rounded-full transition-colors ${
-              settings.skip_preview ? "bg-pink-500" : "bg-gray-600"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
-                settings.skip_preview ? "translate-x-6" : ""
-              }`}
-            />
-          </button>
         </div>
 
         {/* 字幕の最大文字数 */}

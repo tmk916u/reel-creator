@@ -579,8 +579,64 @@ class _TopicsResponse(BaseModel):
     topics: list[_TopicItem] = Field(default_factory=list)
 
 
+_TOPICS_FORCE_PROMPT = """あなたは動画コンテンツの構造化アシスタントです。
+入力された日本語の文字起こしを **必ず 2〜4 個** のポイント／章に分割してください。
+
+ルール:
+- **必ず最低 2 個** に分割する (単一トピックでも論理的な分割を見つける)
+- 「導入」「展開」「結論」 や 「問題」「原因」「解決策」 のような構造的分割でも OK
+- 各ポイントには 8文字以内の短いラベル
+- start_seg は分割の開始セグメント番号(入力の [N] の N)
+
+入力形式:
+[0] テキスト
+[1] テキスト
+...
+
+出力は必ず以下の JSON 形式で返す:
+{"topics": [{"index": 1, "start_seg": 0, "label": "..."}, ...]}
+**空配列 {"topics": []} は返さない (必ず最低 2 個含める)**"""
+
+
+def _call_topics_llm(
+    provider: str, user_message: str, system_prompt: str,
+) -> _TopicsResponse | None:
+    """detect_topics 用 LLM 呼出。 パース失敗時は None を返す。"""
+    try:
+        if provider == "openai":
+            raw = _call_openai(user_message, system_prompt=system_prompt)
+        else:
+            raw = _call_anthropic(user_message, system_prompt=system_prompt)
+        payload = _extract_json(raw)
+        return _TopicsResponse.model_validate(payload)
+    except (ValidationError, json.JSONDecodeError, Exception) as e:
+        logger.warning("LLM topic detection failed: %s", e)
+        return None
+
+
+def _parse_topic_result(
+    parsed: _TopicsResponse, segments: list[str], max_topics: int,
+) -> list[dict]:
+    result: list[dict] = []
+    for t in parsed.topics:
+        if not (0 <= t.start_seg < len(segments)):
+            continue
+        result.append({
+            "index": t.index,
+            "start_seg": t.start_seg,
+            "label": t.label.strip()[:12],
+        })
+        if len(result) >= max_topics:
+            break
+    result.sort(key=lambda x: x["start_seg"])
+    return result
+
+
 def detect_topics(segments: list[str], max_topics: int = 4, video_context: str = "") -> list[dict]:
     """LLM で動画から話のポイント（章）を検出する。
+
+    1 回目で 0 件を返した場合は強制分割プロンプトで 1 回リトライする。
+    LLM の確率的判断ミスでトピックテロップが完全に消える事象を防ぐ。
 
     Args:
         segments: 字幕セグメントのテキストリスト
@@ -602,29 +658,26 @@ def detect_topics(segments: list[str], max_topics: int = 4, video_context: str =
 
     user_message = "\n".join(f"[{i}] {s}" for i, s in enumerate(segments))
 
-    try:
-        if provider == "openai":
-            raw = _call_openai(user_message, system_prompt=_with_context(_TOPICS_SYSTEM_PROMPT, video_context))
-        else:
-            raw = _call_anthropic(user_message, system_prompt=_with_context(_TOPICS_SYSTEM_PROMPT, video_context))
-        payload = _extract_json(raw)
-        parsed = _TopicsResponse.model_validate(payload)
-    except (ValidationError, json.JSONDecodeError, Exception) as e:
-        logger.warning("LLM topic detection failed: %s", e)
+    parsed = _call_topics_llm(
+        provider, user_message,
+        _with_context(_TOPICS_SYSTEM_PROMPT, video_context),
+    )
+    if parsed is None:
         return []
+    result = _parse_topic_result(parsed, segments, max_topics)
 
-    result: list[dict] = []
-    for t in parsed.topics:
-        if not (0 <= t.start_seg < len(segments)):
-            continue
-        result.append({
-            "index": t.index,
-            "start_seg": t.start_seg,
-            "label": t.label.strip()[:12],
-        })
-        if len(result) >= max_topics:
-            break
-    result.sort(key=lambda x: x["start_seg"])
+    # リトライ: 0 件なら強制分割プロンプトで 1 回追加呼出
+    if not result:
+        logger.info("LLM topic detection returned 0, retrying with force prompt")
+        parsed2 = _call_topics_llm(
+            provider, user_message,
+            _with_context(_TOPICS_FORCE_PROMPT, video_context),
+        )
+        if parsed2 is not None:
+            result = _parse_topic_result(parsed2, segments, max_topics)
+        if not result:
+            logger.warning("LLM topic detection retry also returned 0 topics")
+
     logger.info("LLM topic detection: %d topics", len(result))
     return result
 
