@@ -8,9 +8,11 @@
 #             + snap_silences_to_word_boundaries(silence の境界を word 境界に揃える)
 #   Stage 4 : cut_and_concat → cut.mp4
 #   Stage 5a: 2段目 transcribe(cut.mp4 audio) → 施策F(2段目 oversized) + 施策G(1+2段目 OR 無発話)→ cut2.mp4
-#   Stage 5b: 3段目 transcribe(cut2.mp4 audio)→ 字幕用 words → words_to_segments → ASS/SRT
-#             ※3段目が冒頭認識ミスしたら 1段目 words を remap で hybrid 補完 prepend
-#             ※施策F 未発動時は 2段目 words_cut(cut.mp4 ベース)へフォールバック
+#   Stage 5b: 字幕用 words 生成 (1段目 ASR + 1段 remap)
+#             voice_segments と cut2_voices を合成した mapping で
+#             1段目 words を直接 cut2 内時刻に変換 → words_to_segments → ASS/SRT
+#             ※3段目 transcribe は廃止 (短い context で subword 断片化のため)
+#             ※施策F 未発動時は cut2_voices=None で voice_segments のみ使う
 #   Stage 6 : バズモード演出パラメータ準備(HOOK / CTA / topics / BGM / SFX)
 #   Stage 7 : apply_pipeline_combined で 1パス焼き込み → output.mp4
 #
@@ -39,7 +41,12 @@ from app.services.ffmpeg import (
     overlay_hook_text, overlay_cta_text, overlay_topic_numbers, mix_bgm, mix_sfx_at_cuts,
     apply_pipeline_combined,
 )
-from app.services.silence import compute_voice_segments, protect_words_from_silences
+from app.services.silence import (
+    compute_voice_segments,
+    protect_words_from_silences,
+    build_orig_to_cut2_mapping,
+    remap_words_with_mapping,
+)
 from app.services.subtitle import (
     transcribe_audio, transcribe_with_words, segments_to_srt, segments_to_ass,
     words_to_segments, apply_keyword_highlight,
@@ -105,83 +112,6 @@ def _filter_words_by_segments(words: list[dict], segments: list[dict]) -> list[d
                 remapped.append(new_w)
         offset += seg_end - seg_start
     return remapped
-
-
-def _dedup_leading_against_third(
-    leading: list[dict], third: list[dict], window: int = 10,
-) -> list[dict]:
-    """leading の末尾と third の先頭が同じ text の subsequence を含む場合、
-    leading から重複分を削除する。
-
-    1段目 ASR (remap 後) と 3段目 ASR (直接 transcribe) が同じ発話を
-    異なる時刻で認識した場合に、 字幕が冒頭 2 連続で同じ内容になる現象を防ぐ。
-    """
-    if not leading or not third:
-        return leading
-    n = min(window, len(leading), len(third))
-    best = 0
-    for k in range(1, n + 1):
-        if [w["text"] for w in leading[-k:]] == [w["text"] for w in third[:k]]:
-            best = k
-    if best > 0:
-        return leading[:-best]
-    return leading
-
-
-def _hybrid_prepend_leading_words(
-    third_words: list[dict],
-    first_stage_words_in_target: list[dict],
-    target_duration: float,
-    leading_threshold_ratio: float = 0.05,
-    leading_threshold_min: float = 2.0,
-    margin: float = 0.1,
-) -> tuple[list[dict], int]:
-    """3段目 ASR が冒頭認識ミスした場合、 1段目 ASR words で補完する。
-
-    3段目 first_word.start が動画長 × ratio (最低 min 秒) を超える場合、
-    1段目 words を target 時刻空間に remap した結果から、
-    first_word.start - margin より前の word を抽出し、 sort して prepend する。
-
-    最後に leading の末尾と 3段目の先頭の text 重複を dedup する
-    (1段目 remap の時刻ずれで同じ発話が二重表示されるバグを回避)。
-
-    Args:
-        third_words: 3段目 transcribe (cut2 or cut.mp4) の words
-        first_stage_words_in_target: 1段目 words を target 内時刻に remap 済みの結果
-        target_duration: target 動画の duration
-        leading_threshold_ratio: 動画長に対する閾値比率
-        leading_threshold_min: 閾値の下限(秒)
-        margin: 3段目との境界マージン(秒)
-
-    Returns:
-        (final_words, prepended_count)
-    """
-    if not third_words:
-        return third_words, 0
-    threshold = max(leading_threshold_min, target_duration * leading_threshold_ratio)
-    first_3rd_start = third_words[0]["start"]
-    if first_3rd_start <= threshold:
-        return third_words, 0
-    cutoff = first_3rd_start - margin
-    if cutoff <= 0:
-        return third_words, 0
-    leading = [
-        w for w in first_stage_words_in_target
-        if w["start"] >= 0.0 and w["end"] <= cutoff
-    ]
-    if not leading:
-        return third_words, 0
-    leading.sort(key=lambda w: w["start"])
-    before_dedup = len(leading)
-    leading = _dedup_leading_against_third(leading, third_words)
-    if len(leading) < before_dedup:
-        logger.info(
-            "hybrid leading dedup: %d → %d words (削除 %d)",
-            before_dedup, len(leading), before_dedup - len(leading),
-        )
-    if not leading:
-        return third_words, 0
-    return leading + third_words, len(leading)
 
 
 def _remap_edited_segments(segments: list, voice_segments: list[dict]) -> list[dict]:
@@ -652,58 +582,28 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 # voice_segments の境界跨ぎで subword の語順が崩れる事象が確認された
                 # (reel_d8d062dc:「様が悩まれているダイエットお客」)。 本実装で根治。
                 subtitle_words: list[dict] = []
-                if cut2_generated:
-                    job.update({
-                        "stage": "transcribe",
-                        "progress": 80,
-                        "message": "字幕を生成中(3段目)...",
-                    })
-                    cut2_audio = str(job_dir / "cut2_audio.wav")
-                    extract_audio(cut_output, cut2_audio)
-                    words_cut3, _ = transcribe_with_words(
-                        cut2_audio,
-                        initial_prompt=settings.transcript_prompt or None,
-                    )
-                    if corrections and words_cut3:
-                        words_cut3 = apply_corrections_to_words(words_cut3, corrections)
-                    # Hybrid 補完: 3段目が cut2.mp4 冒頭を認識ミスした場合、
-                    # 1段目 words を voice_segments → cut2_voices で remap して補完
-                    if words and voice_segments and cut2_voices_used:
-                        words_in_cut_1st = _filter_words_by_segments(words, voice_segments)
-                        words_in_cut2_1st = _filter_words_by_segments(
-                            words_in_cut_1st, cut2_voices_used,
-                        )
-                        words_cut3, prepended = _hybrid_prepend_leading_words(
-                            words_cut3, words_in_cut2_1st, processed_duration,
-                        )
-                        if prepended:
-                            logger.info(
-                                "3段目 ASR 冒頭ミス hybrid 補完: 1段目から %d words prepend (cut2 内時刻)",
-                                prepended,
-                            )
-                    subtitle_words = words_cut3
-                    logger.info(
-                        "字幕用 words: 3段目 transcribe(cut2.mp4)を採用(%d words)",
-                        len(subtitle_words),
-                    )
-                else:
-                    # Hybrid 補完: 2段目が cut.mp4 冒頭を認識ミスした場合、
-                    # 1段目 words を voice_segments で cut.mp4 内時刻に remap して補完
-                    if words and voice_segments and words_cut:
-                        words_in_cut_1st = _filter_words_by_segments(words, voice_segments)
-                        words_cut, prepended = _hybrid_prepend_leading_words(
-                            words_cut, words_in_cut_1st, processed_duration,
-                        )
-                        if prepended:
-                            logger.info(
-                                "2段目 ASR 冒頭ミス hybrid 補完: 1段目から %d words prepend (cut.mp4 内時刻)",
-                                prepended,
-                            )
-                    subtitle_words = words_cut
-                    logger.info(
-                        "字幕用 words: 2段目 transcribe(cut.mp4)を採用(施策F 未発動、 %d words)",
-                        len(subtitle_words),
-                    )
+                # Stage 5b: 字幕用 words の生成 (1段目 ASR + 1 段 remap)
+                # voice_segments と cut2_voices を合成した 1 段マッピングで
+                # 1段目 words を直接 cut2 内時刻に変換する。 中間状態を経由しないので
+                # 過去の 2 段 remap で発生していた subword 語順崩壊が原理的に発生しない。
+                # 3 段目 transcribe (cut2.mp4) は短い context で subword 断片化する
+                # 問題が観測されたため廃止 (job 0ca6b31b で「客 事への」 の断片化)。
+                job.update({
+                    "stage": "transcribe",
+                    "progress": 80,
+                    "message": "字幕を生成中...",
+                })
+                mappings = build_orig_to_cut2_mapping(
+                    voice_segments, cut2_voices_used,
+                )
+                subtitle_words = remap_words_with_mapping(words, mappings)
+                if corrections and subtitle_words:
+                    subtitle_words = apply_corrections_to_words(subtitle_words, corrections)
+                logger.info(
+                    "字幕用 words: 1段目 ASR + 1段 remap (%d mappings → %d words, 施策F %s)",
+                    len(mappings), len(subtitle_words),
+                    "発動" if cut2_generated else "未発動",
+                )
 
                 if subtitle_words:
                     sub_segments = words_to_segments(

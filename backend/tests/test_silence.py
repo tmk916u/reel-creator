@@ -1,5 +1,10 @@
 # backend/tests/test_silence.py
-from app.services.silence import compute_voice_segments, protect_words_from_silences
+from app.services.silence import (
+    compute_voice_segments,
+    protect_words_from_silences,
+    build_orig_to_cut2_mapping,
+    remap_words_with_mapping,
+)
 
 
 def test_compute_voice_segments_basic():
@@ -165,3 +170,65 @@ def test_protect_words_from_silences_empty_words():
     silences = [{"start": 0.0, "end": 5.0}]
     result = protect_words_from_silences(silences, [], margin=0.1)
     assert result == [{"start": 0.0, "end": 5.0}]
+
+
+# === build_orig_to_cut2_mapping / remap_words_with_mapping (simplify-subtitle-to-1stage-remap) ===
+
+def test_build_mapping_without_cut2_voices():
+    """施策F 未発動: cut2_voices=None で voice_segments のみで mapping。"""
+    voice_segments = [
+        {"start": 5.0, "end": 8.0},   # 元時刻 5-8 → cut.mp4 0-3
+        {"start": 12.0, "end": 15.0}, # 元時刻 12-15 → cut.mp4 3-6
+    ]
+    mappings = build_orig_to_cut2_mapping(voice_segments, None)
+    assert len(mappings) == 2
+    assert mappings[0] == {"orig_start": 5.0, "orig_end": 8.0, "cut2_start": 0.0}
+    assert mappings[1] == {"orig_start": 12.0, "orig_end": 15.0, "cut2_start": 3.0}
+
+
+def test_build_mapping_with_cut2_voices_simple():
+    """施策F 発動: cut2_voices で更に削除された範囲を合成。"""
+    voice_segments = [{"start": 0.0, "end": 10.0}]   # 元時刻 0-10 → cut.mp4 0-10
+    cut2_voices = [
+        {"start": 0.0, "end": 3.0},   # cut.mp4 0-3 → cut2 0-3
+        {"start": 5.0, "end": 8.0},   # cut.mp4 5-8 → cut2 3-6
+    ]
+    mappings = build_orig_to_cut2_mapping(voice_segments, cut2_voices)
+    # 元時刻 0-3 → cut2 0-3、 元時刻 5-8 → cut2 3-6
+    assert len(mappings) == 2
+    assert mappings[0] == {"orig_start": 0.0, "orig_end": 3.0, "cut2_start": 0.0}
+    assert mappings[1] == {"orig_start": 5.0, "orig_end": 8.0, "cut2_start": 3.0}
+
+
+def test_remap_words_with_mapping_standard():
+    """word.start が mapping 範囲内: cut2_start + (w.start - orig_start) に変換。"""
+    mappings = [{"orig_start": 5.0, "orig_end": 8.0, "cut2_start": 0.0}]
+    words = [
+        {"start": 5.5, "end": 5.8, "text": "あ", "is_word_start": True},
+        {"start": 6.0, "end": 6.3, "text": "い"},
+    ]
+    out = remap_words_with_mapping(words, mappings)
+    assert len(out) == 2
+    assert abs(out[0]["start"] - 0.5) < 1e-9
+    assert abs(out[0]["end"] - 0.8) < 1e-9
+    assert out[0]["is_word_start"] is True
+    assert abs(out[1]["start"] - 1.0) < 1e-9
+
+
+def test_remap_words_with_mapping_clamps_end():
+    """word.end が orig_end を超える場合は clamp する (削除区間に半分かかる word)。"""
+    mappings = [{"orig_start": 5.0, "orig_end": 8.0, "cut2_start": 0.0}]
+    words = [{"start": 7.5, "end": 9.0, "text": "う"}]  # end が範囲外
+    out = remap_words_with_mapping(words, mappings)
+    assert len(out) == 1
+    assert abs(out[0]["start"] - 2.5) < 1e-9
+    # end は orig_end=8.0 で clamp → cut2 内では 3.0
+    assert abs(out[0]["end"] - 3.0) < 1e-9
+
+
+def test_remap_words_with_mapping_skips_words_outside():
+    """word.start が全 mapping の範囲外なら結果に含まれない (削除区間内の word)。"""
+    mappings = [{"orig_start": 5.0, "orig_end": 8.0, "cut2_start": 0.0}]
+    words = [{"start": 10.0, "end": 10.5, "text": "削除"}]
+    out = remap_words_with_mapping(words, mappings)
+    assert out == []

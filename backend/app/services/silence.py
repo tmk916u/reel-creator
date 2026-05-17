@@ -2,6 +2,94 @@
 from app.services.jump_cut import merge_ranges
 
 
+def build_orig_to_cut2_mapping(
+    voice_segments: list[dict],
+    cut2_voices: list[dict] | None = None,
+) -> list[dict]:
+    """元時刻 → cut2 内時刻 の 1 段マッピング table を構築する。
+
+    voice_segments と cut2_voices を合成して、 中間状態 (cut.mp4 内時刻) を
+    word が経由しないようにする。 過去の 2 段 remap で発生していた
+    subword 語順崩壊を **アーキテクチャ的に** 不可能にする。
+
+    Args:
+        voice_segments: 元動画から残す範囲 [{"start": float, "end": float}, ...] (元時刻)
+        cut2_voices: cut.mp4 から更に残す範囲 (cut.mp4 内時刻)。 None なら施策F 未発動
+
+    Returns:
+        [{"orig_start": float, "orig_end": float, "cut2_start": float}, ...]
+        word.start が [orig_start, orig_end) 内なら
+        cut2_start + (word.start - orig_start) で cut2 内時刻が得られる。
+    """
+    mappings: list[dict] = []
+    cut_offset = 0.0
+    for vs in voice_segments:
+        vs_dur = vs["end"] - vs["start"]
+        vs_cut_start = cut_offset
+        vs_cut_end = cut_offset + vs_dur
+        cut_offset = vs_cut_end
+        if cut2_voices is None:
+            # 施策F 未発動: cut.mp4 = 最終動画
+            mappings.append({
+                "orig_start": vs["start"],
+                "orig_end": vs["end"],
+                "cut2_start": vs_cut_start,
+            })
+            continue
+        # 施策F 発動: cut.mp4 内時刻範囲 [vs_cut_start, vs_cut_end] が cut2_voices で更に分割される
+        cut2_cum = 0.0
+        for cv in cut2_voices:
+            cv_dur = cv["end"] - cv["start"]
+            inter_start = max(vs_cut_start, cv["start"])
+            inter_end = min(vs_cut_end, cv["end"])
+            if inter_end > inter_start:
+                orig_off_in_vs = inter_start - vs_cut_start
+                mappings.append({
+                    "orig_start": vs["start"] + orig_off_in_vs,
+                    "orig_end": vs["start"] + (inter_end - vs_cut_start),
+                    "cut2_start": cut2_cum + (inter_start - cv["start"]),
+                })
+            cut2_cum += cv_dur
+    return mappings
+
+
+def remap_words_with_mapping(
+    words: list[dict], mappings: list[dict],
+) -> list[dict]:
+    """word を 1 段マッピングで cut2 内時刻に変換する。
+
+    word.start が含まれる mapping を線形探索 (mapping 数は 10-50 程度なので O(n) で十分)。
+    word.end が mapping 範囲を超える場合は clamp する。
+
+    Args:
+        words: 元時刻の word 列 [{"start": float, "end": float, "text": str, ...}]
+        mappings: build_orig_to_cut2_mapping で得たマッピング
+
+    Returns:
+        cut2 内時刻に変換された word 列(削除区間にかかる word は省略)
+    """
+    if not words or not mappings:
+        return []
+    out: list[dict] = []
+    for w in words:
+        for m in mappings:
+            if m["orig_start"] <= w["start"] < m["orig_end"]:
+                new_start = m["cut2_start"] + (w["start"] - m["orig_start"])
+                w_end_clamped = min(w["end"], m["orig_end"])
+                new_end = m["cut2_start"] + (w_end_clamped - m["orig_start"])
+                if new_end > new_start + 0.001:
+                    new_w: dict = {
+                        "start": new_start,
+                        "end": new_end,
+                        "text": w["text"],
+                    }
+                    if "is_word_start" in w:
+                        new_w["is_word_start"] = w["is_word_start"]
+                    out.append(new_w)
+                break
+    return out
+
+
 def protect_words_from_silences(
     silences: list[dict],
     words: list[dict],

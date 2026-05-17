@@ -57,8 +57,8 @@ def _enter_common_mocks(st):
     st.enter_context(patch.object(video_module, "detect_topics", return_value=[]))
 
 
-def test_stage5b_calls_third_transcribe_when_oversized_2nd_detected(tmp_path, monkeypatch):
-    """施策F が発動して cut2.mp4 が生成されると、 字幕用に 3段目 transcribe(cut2_audio.wav)を呼ぶ。"""
+def test_stage5b_does_not_call_third_transcribe(tmp_path, monkeypatch):
+    """Stage 5b は 1 段目 ASR + 1 段 remap のみ。 cut2_audio.wav を transcribe しない。"""
     job_id = _setup_job(tmp_path, monkeypatch)
 
     word_for_jump = [
@@ -81,9 +81,9 @@ def test_stage5b_calls_third_transcribe_when_oversized_2nd_detected(tmp_path, mo
             ],
         ))
         m_trans.side_effect = [
-            (word_for_jump, []),
-            (word_for_jump, []),
-            (word_for_jump, []),
+            (word_for_jump, []),  # 1 段目 (Stage 3)
+            (word_for_jump, []),  # 2 段目 (Stage 5a, cut.mp4)
+            # 3 段目は呼ばれない
         ]
         m_oversized.side_effect = [
             [],
@@ -97,189 +97,7 @@ def test_stage5b_calls_third_transcribe_when_oversized_2nd_detected(tmp_path, mo
         )
         video_module._run_processing(job_id, settings)
 
-    assert m_trans.call_count == 3
-    third_call_audio = m_trans.call_args_list[2][0][0]
-    assert third_call_audio.endswith("cut2_audio.wav")
-
-
-def test_stage5b_falls_back_to_second_transcribe_when_no_oversized_2nd(tmp_path, monkeypatch):
-    """施策F が発動しない (oversized_2nd 空) と、 字幕用は 2段目 words_cut にフォールバックして 3段目 transcribe は呼ばない。"""
-    job_id = _setup_job(tmp_path, monkeypatch)
-
-    words_safe = [
-        {"start": 0.5, "end": 0.6, "text": "w1", "is_word_start": True},
-        {"start": 7.4, "end": 7.5, "text": "w2", "is_word_start": True},
-    ]
-
-    with ExitStack() as st:
-        _enter_common_mocks(st)
-        m_trans = st.enter_context(patch.object(video_module, "transcribe_with_words"))
-        m_oversized = st.enter_context(patch.object(video_module, "detect_oversized_words"))
-        st.enter_context(patch.object(
-            video_module, "get_video_duration",
-            side_effect=[10.0, 8.0, 8.0],
-        ))
-        st.enter_context(patch.object(
-            video_module, "compute_voice_segments",
-            return_value=[{"start": 0.0, "end": 10.0}],
-        ))
-        m_trans.side_effect = [
-            (words_safe, []),
-            (words_safe, []),
-        ]
-        m_oversized.side_effect = [[], []]
-
-        settings = ProcessRequest(
-            enable_subtitles=True,
-            enable_jump_cut=True,
-            enable_buzz_mode=False,
-        )
-        video_module._run_processing(job_id, settings)
-
+    # transcribe は 2 回まで (1 段目 + 2 段目)。 3 段目はスキップ
     assert m_trans.call_count == 2
     audios = [c[0][0] for c in m_trans.call_args_list]
     assert all(not a.endswith("cut2_audio.wav") for a in audios)
-
-
-def test_hybrid_prepend_when_third_stage_misses_leading():
-    """3段目 first_word.start が動画長 × 0.05(最低 2 秒)を超えると、 1段目補完を prepend する。"""
-    from app.routers.video import _hybrid_prepend_leading_words
-
-    third = [{"start": 30.0, "end": 30.3, "text": "目"}]
-    first_in_target = [
-        {"start": 5.0, "end": 5.3, "text": "客"},
-        {"start": 5.4, "end": 5.7, "text": "様"},
-    ]
-    out, prepended = _hybrid_prepend_leading_words(
-        third_words=third,
-        first_stage_words_in_target=first_in_target,
-        target_duration=100.0,
-    )
-    assert prepended == 2
-    assert out[0]["text"] == "客"
-    assert out[1]["text"] == "様"
-    assert out[2]["text"] == "目"
-
-
-def test_hybrid_no_prepend_when_third_stage_recognizes_leading():
-    """3段目 first_word.start が閾値以下なら、 補完しない。"""
-    from app.routers.video import _hybrid_prepend_leading_words
-
-    third = [{"start": 0.5, "end": 0.8, "text": "客"}]
-    first_in_target = [{"start": 0.2, "end": 0.4, "text": "お"}]
-    out, prepended = _hybrid_prepend_leading_words(
-        third_words=third,
-        first_stage_words_in_target=first_in_target,
-        target_duration=100.0,
-    )
-    assert prepended == 0
-    assert out == third
-
-
-def test_hybrid_prepend_respects_margin_and_sorts():
-    """補完範囲は first_3rd_start - margin より前まで、 prepend 後は start で sort。"""
-    from app.routers.video import _hybrid_prepend_leading_words
-
-    third = [{"start": 30.0, "end": 30.3, "text": "目"}]
-    # margin=0.1 で cutoff=29.9。 word.end 29.95 はギリギリ補完対象外
-    first_in_target = [
-        {"start": 5.4, "end": 5.7, "text": "様"},
-        {"start": 5.0, "end": 5.3, "text": "客"},  # 順序が逆でも sort される
-        {"start": 29.5, "end": 29.95, "text": "後"},  # end が cutoff 29.9 を越えるので除外
-    ]
-    out, prepended = _hybrid_prepend_leading_words(
-        third_words=third,
-        first_stage_words_in_target=first_in_target,
-        target_duration=100.0,
-    )
-    assert prepended == 2
-    assert out[0]["text"] == "客"
-    assert out[1]["text"] == "様"
-    assert out[2]["text"] == "目"
-
-
-# === hybrid leading dedup (fix-hybrid-leading-duplicate) ===
-
-def test_dedup_leading_against_third_full_match():
-    """leading 末尾と third 先頭が完全一致 → 末尾分を leading から削除。"""
-    from app.routers.video import _dedup_leading_against_third
-
-    leading = [
-        {"start": 0.0, "end": 0.3, "text": "客"},
-        {"start": 0.3, "end": 0.6, "text": "様"},
-        {"start": 0.6, "end": 0.9, "text": "が"},
-    ]
-    third = [
-        {"start": 3.0, "end": 3.3, "text": "客"},
-        {"start": 3.3, "end": 3.6, "text": "様"},
-        {"start": 3.6, "end": 3.9, "text": "が"},
-        {"start": 3.9, "end": 4.2, "text": "悩"},
-    ]
-    out = _dedup_leading_against_third(leading, third)
-    # leading 末尾 3 word が third 先頭 3 word と一致 → leading 全削除
-    assert out == []
-
-
-def test_dedup_leading_against_third_no_overlap():
-    """leading 末尾と third 先頭に重複なし → leading 全体保持。"""
-    from app.routers.video import _dedup_leading_against_third
-
-    leading = [
-        {"start": 0.0, "end": 0.3, "text": "あ"},
-        {"start": 0.3, "end": 0.6, "text": "い"},
-    ]
-    third = [
-        {"start": 3.0, "end": 3.3, "text": "う"},
-        {"start": 3.3, "end": 3.6, "text": "え"},
-    ]
-    out = _dedup_leading_against_third(leading, third)
-    assert out == leading
-
-
-def test_dedup_leading_against_third_partial_overlap():
-    """leading 末尾 2 word が third 先頭 2 word と一致 → 2 word 削除。"""
-    from app.routers.video import _dedup_leading_against_third
-
-    leading = [
-        {"start": 0.0, "end": 0.3, "text": "ダ"},
-        {"start": 0.3, "end": 0.6, "text": "イ"},
-        {"start": 0.6, "end": 0.9, "text": "エ"},
-        {"start": 0.9, "end": 1.2, "text": "ット"},
-    ]
-    third = [
-        {"start": 3.0, "end": 3.3, "text": "エ"},
-        {"start": 3.3, "end": 3.6, "text": "ット"},
-        {"start": 3.6, "end": 3.9, "text": "の"},
-    ]
-    out = _dedup_leading_against_third(leading, third)
-    assert [w["text"] for w in out] == ["ダ", "イ"]
-
-
-def test_hybrid_prepend_invokes_dedup():
-    """hybrid 補完で leading と 3 段目の重複 sequence が dedup される (統合テスト)。"""
-    from app.routers.video import _hybrid_prepend_leading_words
-
-    # 3段目: 「お客様が悩」 を 30 秒目で認識
-    third = [
-        {"start": 30.0, "end": 30.3, "text": "お"},
-        {"start": 30.3, "end": 30.6, "text": "客"},
-        {"start": 30.6, "end": 30.9, "text": "様"},
-        {"start": 30.9, "end": 31.2, "text": "が"},
-        {"start": 31.2, "end": 31.5, "text": "悩"},
-    ]
-    # 1段目補完: 同じ「お客様が悩」 が 0 秒目に remap されている (bug 再現)
-    first_in_target = [
-        {"start": 0.0, "end": 0.3, "text": "お"},
-        {"start": 0.3, "end": 0.6, "text": "客"},
-        {"start": 0.6, "end": 0.9, "text": "様"},
-        {"start": 0.9, "end": 1.2, "text": "が"},
-        {"start": 1.2, "end": 1.5, "text": "悩"},
-    ]
-    out, prepended = _hybrid_prepend_leading_words(
-        third_words=third,
-        first_stage_words_in_target=first_in_target,
-        target_duration=100.0,
-    )
-    # 完全重複なので leading は全削除 → 3 段目だけ残る
-    assert prepended == 0
-    assert out == third
