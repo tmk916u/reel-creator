@@ -51,7 +51,6 @@ from app.services.subtitle import (
     transcribe_audio, transcribe_with_words, segments_to_srt, segments_to_ass,
     words_to_segments, apply_keyword_highlight, detect_suspicious_segments,
 )
-from app.services.asr import transcribe_ensemble
 from app.config import CTA_TEXT
 from app.services.jump_cut import (
     detect_filler_ranges, detect_tempo_ranges, detect_redundant_speech,
@@ -61,7 +60,7 @@ from app.services.jump_cut import (
 from app.services.llm import (
     detect_restatements, correct_transcript_segments, extract_keywords, generate_hook,
     detect_topics, select_bgm_style, generate_captions, predict_buzz_score,
-    summarize_video_context, summarize_with_mishearings, cross_check_disagreements,
+    summarize_video_context, summarize_with_mishearings,
 )
 from app.services.vad import detect_silence_silero, snap_silences_to_word_boundaries
 
@@ -352,30 +351,12 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 job.update({
                     "stage": "transcribe_for_cut",
                     "progress": 30,
-                    "message": "AIで音声を解析中(ensemble)...",
+                    "message": "AIで音声を解析中...",
                 })
-                # 1段目 transcribe を ReazonSpeech + WhisperX の ensemble に切替
-                # 両 ASR を並列実行し、 不一致箇所は LLM cross-check で文脈推測修正
-                words, pre_cut_segments, ens_debug = transcribe_ensemble(
+                words, pre_cut_segments = transcribe_with_words(
                     audio_path,
                     initial_prompt=settings.transcript_prompt or None,
                 )
-                # LLM cross-check で不一致箇所を解決
-                disagreements = ens_debug.get("disagreements", [])
-                if disagreements:
-                    resolved = cross_check_disagreements(
-                        disagreements, words, video_context="",
-                    )
-                    # cross_check の text を words に反映 (start でマッチング)
-                    resolved_map = {
-                        round(r["start"], 3): r for r in resolved
-                        if r.get("source") == "cross_check"
-                    }
-                    for w in words:
-                        key = round(w["start"], 3)
-                        if w.get("source") == "disagreement" and key in resolved_map:
-                            w["text"] = resolved_map[key]["text"]
-                            w["source"] = "cross_check"
 
                 # 同音異義語の辞書置換（タイムスタンプは保持）
                 corrections = load_corrections()
