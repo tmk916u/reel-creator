@@ -2,6 +2,59 @@
 from app.services.jump_cut import merge_ranges
 
 
+def protect_words_from_silences(
+    silences: list[dict],
+    words: list[dict],
+    margin: float = 0.1,
+) -> list[dict]:
+    """silences のうち、 ASR が word を認識した範囲を穴あけして除外する。
+
+    silero VAD や silencedetect が「無音」と判断した区間でも、 1段目 ASR が
+    word を検出していれば、 それは実発話とみなして voice_segments に保護する。
+
+    Args:
+        silences: 無音区間 [{"start": float, "end": float}, ...]
+        words: ASR が認識した word 列 [{"start": float, "end": float, "text": str}, ...]
+        margin: word の前後に確保するバッファ(秒)。 word 直後の閉鎖音や息継ぎを軽く残す
+
+    Returns:
+        穴あけ後の silences。 word を完全に含む silence は前後 2 つに分割される。
+    """
+    if not words or not silences:
+        return list(silences)
+    out: list[dict] = []
+    for s in silences:
+        s_start, s_end = s["start"], s["end"]
+        overlapping = [
+            w for w in words
+            if w["start"] < s_end and w["end"] > s_start
+        ]
+        if not overlapping:
+            out.append(s)
+            continue
+        protected: list[tuple[float, float]] = []
+        for w in overlapping:
+            p_s = max(s_start, w["start"] - margin)
+            p_e = min(s_end, w["end"] + margin)
+            if p_e > p_s:
+                protected.append((p_s, p_e))
+        protected.sort()
+        merged: list[list[float]] = []
+        for p_s, p_e in protected:
+            if merged and p_s <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], p_e)
+            else:
+                merged.append([p_s, p_e])
+        cursor = s_start
+        for p_s, p_e in merged:
+            if p_s > cursor + 0.001:
+                out.append({"start": cursor, "end": p_s})
+            cursor = max(cursor, p_e)
+        if cursor < s_end - 0.001:
+            out.append({"start": cursor, "end": s_end})
+    return [r for r in out if r["end"] > r["start"]]
+
+
 def compute_voice_segments(
     silences: list[dict],
     total_duration: float,

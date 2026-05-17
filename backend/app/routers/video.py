@@ -4,6 +4,8 @@
 #   Stage 1 : 音声抽出 (extract_audio → audio.wav)
 #   Stage 2 : 無音検出 (Silero VAD + ffmpeg silencedetect 補強)
 #   Stage 3 : 1段目 transcribe(元動画 audio) + 施策A-E(filler/tempo/restate/redundant/word_gap/oversized)
+#             末尾で protect_words_from_silences(ASR 認識範囲を silences から穴あけ)
+#             + snap_silences_to_word_boundaries(silence の境界を word 境界に揃える)
 #   Stage 4 : cut_and_concat → cut.mp4
 #   Stage 5a: 2段目 transcribe(cut.mp4 audio) → 施策F(2段目 oversized) + 施策G(1+2段目 OR 無発話)→ cut2.mp4
 #   Stage 5b: 3段目 transcribe(cut2.mp4 audio)→ 字幕用 words → words_to_segments → ASS/SRT
@@ -36,7 +38,7 @@ from app.services.ffmpeg import (
     overlay_hook_text, overlay_cta_text, overlay_topic_numbers, mix_bgm, mix_sfx_at_cuts,
     apply_pipeline_combined,
 )
-from app.services.silence import compute_voice_segments
+from app.services.silence import compute_voice_segments, protect_words_from_silences
 from app.services.subtitle import (
     transcribe_audio, transcribe_with_words, segments_to_srt, segments_to_ass,
     words_to_segments, apply_keyword_highlight,
@@ -391,6 +393,14 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 filler_cuts + tempo_cuts + restatement_cuts + redundant_cuts
                 + word_gap_cuts + oversized_cuts
             )
+
+        # ASR-aware silence 保護: 1段目 ASR が word を認識した範囲は silero VAD が
+        # 「無音」と判断していても voice_segments に物理的に残す。 silero と ASR の
+        # 判断が食い違う場合は ASR を優先(誤って発話を削除しないため)。
+        # 例: silero silence 0.0-20.75、 ASR word 「客」 20.38-20.70
+        #     → silence は 0.0-20.28 に短縮、 20.28 以降は voice_segments に保護
+        if words:
+            silences = protect_words_from_silences(silences, words)
 
         # 単語境界スナップ: silence と extra_cuts が単語の中で切らないよう補正
         if words:

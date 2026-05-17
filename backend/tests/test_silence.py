@@ -1,5 +1,5 @@
 # backend/tests/test_silence.py
-from app.services.silence import compute_voice_segments
+from app.services.silence import compute_voice_segments, protect_words_from_silences
 
 
 def test_compute_voice_segments_basic():
@@ -109,3 +109,59 @@ def test_compute_voice_segments_padding_merges_overlap():
     result = compute_voice_segments(silences, 10.0, padding=0.1, min_cut_length=0.05)
     # padding により有音区間 [0, 2.1] と [2.05, 10.0] が重なるので統合
     assert result == [{"start": 0.0, "end": 10.0}]
+
+
+def test_protect_words_from_silences_boundary_overlap():
+    """silence の末尾近くで word が重なる場合、 silence は word の前で切れる。
+
+    再現: silero VAD が 0.0-20.75 を無音と判定したが、 1段目 ASR が 20.38 で
+    「客」を認識 → 該当範囲を silence から除外して voice_segments に保護する。
+    """
+    silences = [{"start": 0.0, "end": 20.75}]
+    words = [{"start": 20.38, "end": 20.70, "text": "客"}]
+    result = protect_words_from_silences(silences, words, margin=0.1)
+    # word.start - margin = 20.28 まで silence、 word.end + margin = 20.80 > silence.end なので後ろは無し
+    assert len(result) == 1
+    assert result[0]["start"] == 0.0
+    assert abs(result[0]["end"] - 20.28) < 1e-9
+
+
+def test_protect_words_from_silences_middle_split():
+    """silence の中央に word がある場合は 2 つに分割される。"""
+    silences = [{"start": 0.0, "end": 30.0}]
+    words = [{"start": 10.0, "end": 12.0, "text": "あ"}]
+    result = protect_words_from_silences(silences, words, margin=0.1)
+    assert len(result) == 2
+    assert abs(result[0]["start"] - 0.0) < 1e-9
+    assert abs(result[0]["end"] - 9.9) < 1e-9
+    assert abs(result[1]["start"] - 12.1) < 1e-9
+    assert abs(result[1]["end"] - 30.0) < 1e-9
+
+
+def test_protect_words_from_silences_no_overlap_is_noop():
+    """silence と重なる word が無い場合は元の silences を返す。"""
+    silences = [{"start": 5.0, "end": 10.0}]
+    words = [{"start": 12.0, "end": 13.0, "text": "い"}]
+    result = protect_words_from_silences(silences, words, margin=0.1)
+    assert result == [{"start": 5.0, "end": 10.0}]
+
+
+def test_protect_words_from_silences_merges_overlapping_words():
+    """複数 word が重なる場合は merge してから 1 つの保護範囲として穴あけ。"""
+    silences = [{"start": 0.0, "end": 30.0}]
+    words = [
+        {"start": 5.0, "end": 7.0, "text": "う"},
+        {"start": 6.5, "end": 8.0, "text": "え"},
+    ]
+    result = protect_words_from_silences(silences, words, margin=0.1)
+    # word が 5.0-8.0 にまとまり、 margin 込みで 4.9-8.1 が保護される
+    assert len(result) == 2
+    assert abs(result[0]["end"] - 4.9) < 1e-9
+    assert abs(result[1]["start"] - 8.1) < 1e-9
+
+
+def test_protect_words_from_silences_empty_words():
+    """words が空の場合は元の silences を返す。"""
+    silences = [{"start": 0.0, "end": 5.0}]
+    result = protect_words_from_silences(silences, [], margin=0.1)
+    assert result == [{"start": 0.0, "end": 5.0}]
