@@ -1,4 +1,19 @@
 # backend/app/routers/video.py
+#
+# 動画処理パイプラインのステージ構成:
+#   Stage 1 : 音声抽出 (extract_audio → audio.wav)
+#   Stage 2 : 無音検出 (Silero VAD + ffmpeg silencedetect 補強)
+#   Stage 3 : 1段目 transcribe(元動画 audio) + 施策A-E(filler/tempo/restate/redundant/word_gap/oversized)
+#   Stage 4 : cut_and_concat → cut.mp4
+#   Stage 5a: 2段目 transcribe(cut.mp4 audio) → 施策F(2段目 oversized) + 施策G(1+2段目 OR 無発話)→ cut2.mp4
+#   Stage 5b: 3段目 transcribe(cut2.mp4 audio)→ 字幕用 words → words_to_segments → ASS/SRT
+#             ※施策F 未発動時は 2段目 words_cut(cut.mp4 ベース)へフォールバック
+#   Stage 6 : バズモード演出パラメータ準備(HOOK / CTA / topics / BGM / SFX)
+#   Stage 7 : apply_pipeline_combined で 1パス焼き込み → output.mp4
+#
+# 字幕用 words は cut2(または cut)内時刻空間だけで構成され、
+# `_filter_words_by_segments` による多段 remap を経由しない。
+# 1+2段目 ASR は動画カット判定(施策F/G)に専念し、 字幕生成は 3段目で独立に取り直す。
 import logging
 import uuid
 import shutil
@@ -51,35 +66,6 @@ job_store: dict[str, dict] = {}
 
 def _font_size_to_px(size: FontSize) -> int:
     return {"small": 16, "medium": 22, "large": 30}[size.value]
-
-
-def _merge_word_streams(
-    primary: list[dict],
-    secondary: list[dict],
-    near_threshold: float = 0.3,
-) -> list[dict]:
-    """2 つの word ストリーム(1段目/2段目 ASR)を時刻順にマージする。
-
-    どちらか一方の ASR が認識ミスした発話を、もう一方で補完するための統合。
-    近接する word(start 差が near_threshold 秒以内)は重複とみなし、primary を優先。
-    """
-    if not primary and not secondary:
-        return []
-    if not secondary:
-        return list(primary)
-    if not primary:
-        return list(secondary)
-
-    merged = list(primary) + list(secondary)
-    merged.sort(key=lambda w: w["start"])
-
-    out: list[dict] = []
-    for w in merged:
-        if out and abs(w["start"] - out[-1]["start"]) < near_threshold:
-            # 重複/近接: より先に追加された方(primary 由来)を採用、 secondary は捨てる
-            continue
-        out.append(w)
-    return out
 
 
 def _filter_words_by_segments(words: list[dict], segments: list[dict]) -> list[dict]:
@@ -477,6 +463,8 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 if corrections and words_cut:
                     words_cut = apply_corrections_to_words(words_cut, corrections)
 
+                cut2_generated = False
+
                 # 施策F: 2 段目 oversized カット
                 # cut.mp4 を再 transcribe すると、元 transcribe では現れなかった
                 # 「長い word に埋もれる沈黙」が新たに見つかることがある。
@@ -562,30 +550,41 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                         if cut2_voices:
                             cut2_output = str(job_dir / "cut2.mp4")
                             cut_and_concat(cut_output, cut2_voices, cut2_output)
-                            # 動画ファイルとパスを差し替え、字幕用 words も再マッピング
                             cut_output = cut2_output
                             final_output = cut2_output
                             processed_duration = get_video_duration(cut2_output)
-                            words_cut = _filter_words_by_segments(words_cut, cut2_voices)
-                            # 1段目 words も cut2 時刻に二段 remap (元時刻 → cut.mp4 → cut2)
-                            if words_in_cut_1st:
-                                words_in_cut_1st = _filter_words_by_segments(
-                                    words_in_cut_1st, cut2_voices,
-                                )
+                            cut2_generated = True
 
-                # 字幕用 words: 1段目を優先(元動画全体で文脈安定)、無い場合のみ 2段目に fallback。
-                # subword レベルのマージは破綻するため避ける(reel_d29b67ae で断片化発生)。
-                # 2段目 words は施策F の動画カット判定にのみ使う。
-                if words_in_cut_1st:
-                    subtitle_words = words_in_cut_1st
+                # Stage 5b: 字幕用 words の取得
+                # 動画カット判定(施策F/G)に使った words / words_cut は字幕生成から切り離す。
+                # 字幕用は cut2.mp4(または cut.mp4)を直接 transcribe して時刻空間を統一する。
+                # 旧構成では 1段目 words を _filter_words_by_segments で 2段 remap していたが、
+                # voice_segments の境界跨ぎで subword の語順が崩れる事象が確認された
+                # (reel_d8d062dc:「様が悩まれているダイエットお客」)。 本実装で根治。
+                subtitle_words: list[dict] = []
+                if cut2_generated:
+                    job.update({
+                        "stage": "transcribe",
+                        "progress": 80,
+                        "message": "字幕を生成中(3段目)...",
+                    })
+                    cut2_audio = str(job_dir / "cut2_audio.wav")
+                    extract_audio(cut_output, cut2_audio)
+                    words_cut3, _ = transcribe_with_words(
+                        cut2_audio,
+                        initial_prompt=settings.transcript_prompt or None,
+                    )
+                    if corrections and words_cut3:
+                        words_cut3 = apply_corrections_to_words(words_cut3, corrections)
+                    subtitle_words = words_cut3
                     logger.info(
-                        "字幕用 words: 1段目 transcribe を採用(%d words)",
+                        "字幕用 words: 3段目 transcribe(cut2.mp4)を採用(%d words)",
                         len(subtitle_words),
                     )
                 else:
                     subtitle_words = words_cut
                     logger.info(
-                        "字幕用 words: 2段目 transcribe を採用(1段目が空、%d words)",
+                        "字幕用 words: 2段目 transcribe(cut.mp4)を採用(施策F 未発動、 %d words)",
                         len(subtitle_words),
                     )
 
