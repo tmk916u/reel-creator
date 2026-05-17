@@ -669,6 +669,9 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 )
 
             # 後段の /api/captions /api/buzz-score 用に transcript を永続化
+            # words / segments 共に **字幕と同じ時刻空間** (cut2 or cut 内時刻) で揃える。
+            # 旧実装は words に 1段目 transcribe(元時刻)を保存しており、 segments(cut2内時刻)と
+            # 不整合が起き、 measure_quality の #6 同期判定が誤った bad_count を返していた。
             try:
                 import json as _json
                 import re as _re
@@ -679,9 +682,10 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                     }
                     for s in sub_segments
                 ]
+                persisted_words = subtitle_words if not edited_provided else []
                 (job_dir / "transcript.json").write_text(
                     _json.dumps(
-                        {"segments": _clean_segs, "words": words},
+                        {"segments": _clean_segs, "words": persisted_words},
                         ensure_ascii=False,
                     ),
                     encoding="utf-8",
