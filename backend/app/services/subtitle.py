@@ -61,6 +61,9 @@ def words_to_segments(
     # 単語境界が一向に来ない場合の絶対上限（SentencePiece マーカーが希薄な
     # ReazonSpeech 出力で is_word_start=False が連続して flush されないのを防ぐ）
     hard_limit = max(int(max_chars * 1.5), max_chars + 4)
+    # 単一文字の格助詞: この直後で flush すると「〜は/〜が/〜を」で文が
+    # 途切れて見えるので、できる限り次の語まで持ち越す
+    _trailing_particles = set("はがをにでとのもへやかな")
     for i, w in enumerate(words):
         text = w["text"]
         gap = w["start"] - current_words[-1]["end"] if current_words else 0.0
@@ -69,10 +72,16 @@ def words_to_segments(
 
         over_chars = len(current_text) + len(text) > max_chars
         over_hard = len(current_text) + len(text) > hard_limit
+        # 末尾が格助詞なら不自然な切れ目を避けるため flush を抑制(絶対上限は守る)
+        ends_with_particle = (
+            current_text and current_text[-1] in _trailing_particles
+        )
         # 単語の途中では切らない（subword の中で字幕改行しない）が、
         # 絶対上限を超えるなら is_word_start に関係なく強制 flush
         should_flush_before = current_words and (
-            gap > max_gap or (over_chars and is_word_start) or over_hard
+            gap > max_gap
+            or (over_chars and is_word_start and not ends_with_particle)
+            or over_hard
         )
         if should_flush_before:
             flush()

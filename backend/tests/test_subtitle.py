@@ -172,6 +172,22 @@ def test_words_to_segments_respects_word_start_boundary():
     assert segments[1]["text"] == "夏が好きです"
 
 
+def test_words_to_segments_keeps_particle_with_next_word():
+    """末尾が格助詞 (は/が/を/に/で/と/の/も) なら不自然な切れを避けて持ち越す"""
+    # max_chars=8 でも「ボディが」(4文字、末尾「が」)の直後では flush しない
+    words = [
+        {"start": 0.0, "end": 0.5, "text": "ボディ", "is_word_start": True},
+        {"start": 0.5, "end": 0.7, "text": "が", "is_word_start": False},
+        {"start": 0.7, "end": 1.2, "text": "メイク", "is_word_start": True},  # 通常なら 7→10で超過 flush
+        {"start": 1.2, "end": 3.0, "text": "重要なんですよ", "is_word_start": True},
+    ]
+    segments = words_to_segments(words, max_chars=8, lead_time=0, tail_time=0)
+    # 「ボディが」直後で切れず、「ボディがメイク」まで持ち越し、その後で flush
+    # 末尾「ク」(非助詞)+「重要」(is_word_start, 超過)で初めて切れる
+    assert any("ボディがメイク" in seg["text"] for seg in segments), \
+        f"助詞直後で flush された: {[s['text'] for s in segments]}"
+
+
 def test_words_to_segments_hard_limit_when_no_word_start():
     """is_word_start=False の subword が連続して word_start が来ない場合、
     絶対上限 max_chars*1.5 で強制 flush される（暴走防止）"""

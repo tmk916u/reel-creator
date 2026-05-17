@@ -35,7 +35,7 @@ from app.services.jump_cut import (
 from app.services.llm import (
     detect_restatements, correct_transcript_segments, extract_keywords, generate_hook,
     detect_topics, select_bgm_style, generate_captions, predict_buzz_score,
-    summarize_video_context,
+    summarize_video_context, summarize_with_mishearings,
 )
 from app.services.vad import detect_silence_silero, snap_silences_to_word_boundaries
 
@@ -506,15 +506,17 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 else:
                     sub_segments = segs_cut
 
-            # 動画の文脈サマリーを LLM で生成(辞書追加なしに「動画の核心」を共有)
-            # 校正/キーワード抽出/HOOK 生成 などの後続 LLM 呼出すべてに共通の文脈として渡す
+            # 動画の文脈サマリー + 動画固有の誤認識辞書を 1 回の LLM 呼出で生成
+            # (案②: イタチごっこ対策の柱)
             pre_correction_text = " ".join(s["text"] for s in sub_segments)
-            video_context = summarize_video_context(pre_correction_text)
+            video_context, dynamic_corrections = summarize_with_mishearings(pre_correction_text)
 
             if not edited_provided:
-                # 辞書置換 → LLM校正（編集済みなら適用しない）
+                # 辞書置換: 動画固有(LLM抽出) + 静的(jp_corrections.txt) を union
+                # 静的辞書を後勝ちにして、検証済みパターンを優先
+                merged_corrections = {**dynamic_corrections, **corrections}
                 for seg in sub_segments:
-                    seg["text"] = apply_corrections_to_text(seg["text"], corrections)
+                    seg["text"] = apply_corrections_to_text(seg["text"], merged_corrections)
 
                 texts = [s["text"] for s in sub_segments]
                 corrected_texts = correct_transcript_segments(texts, video_context=video_context)
