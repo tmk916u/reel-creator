@@ -459,18 +459,15 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                     )
                     # 施策G: ASR が word を一つも検出しなかった「冒頭・末尾の無発話」を削除
                     # VAD/silencedetect が拾えない呼吸音・環境音などが残るケースに対処
-                    # 施策G の発動条件:
-                    # 最初/最後の word が「通常 word」(duration < max_word_duration) の時のみ。
-                    # word が oversized(中に長い沈黙が埋もれている)の場合は施策F が処理する。
+                    # 施策G(汎用版): 1段目+2段目の両方の ASR で「無発話」と合意した
+                    # 範囲のみを削除候補とする。片方でも発話を認識していれば残す。
+                    # ハードコード上限は廃止し、ASR 結果同士のクロスチェックで汎用化。
                     #
-                    # 削除幅の上限(LEADING/TRAILING_MAX_TRIM):
-                    # 施策G は「VAD/silencedetect が取りこぼした数秒の呼吸音・環境音」を
-                    # 消す用途。それ以上長い「無発話」は本当は ReazonSpeech の認識ミスで
-                    # 発話が word に変換されなかっただけの可能性があり、削除すると実発話が
-                    # 消える(reel_19e6303c で 58秒削除して「お客様が悩まれているダイエット」
-                    # を失った事例)。本当に長い無音は Stage 2 で既に削除されているはず。
-                    LEADING_MAX_TRIM = 5.0
-                    TRAILING_MAX_TRIM = 5.0
+                    # 仕組み:
+                    # - 1段目: 元動画 audio に対する transcribe = cached/再構築の words (元時刻)
+                    # - 2段目: cut.mp4 audio に対する transcribe = words_cut (cut.mp4 内時刻)
+                    # 1段目 words を voice_segments で cut.mp4 内時刻に remap して、
+                    # 「両方の ASR が冒頭/末尾の発話を見つけられなかった範囲」だけ削除する。
                     cut_duration_pre = get_video_duration(cut_output)
                     leading_threshold = 1.0
                     trailing_threshold = 1.0
@@ -478,38 +475,42 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                     last_dur = words_cut[-1]["end"] - words_cut[-1]["start"]
                     first_is_normal = first_dur <= settings.max_word_duration
                     last_is_normal = last_dur <= settings.max_word_duration
-                    if first_is_normal and words_cut[0]["start"] > leading_threshold:
-                        proposed_end = max(0.0, words_cut[0]["start"] - 0.2)
-                        clamped_end = min(proposed_end, LEADING_MAX_TRIM)
-                        if proposed_end > LEADING_MAX_TRIM:
+
+                    # 1段目 transcribe の words を cut.mp4 内時刻にマッピング
+                    words_in_cut_1st: list[dict] = []
+                    if words and voice_segments:
+                        words_in_cut_1st = _filter_words_by_segments(words, voice_segments)
+
+                    # 「両方の ASR が認識した最も早い/最も遅い発話」を採用
+                    earliest_1st = words_in_cut_1st[0]["start"] if words_in_cut_1st else float("inf")
+                    earliest_2nd = words_cut[0]["start"] if words_cut else float("inf")
+                    combined_first = min(earliest_1st, earliest_2nd)
+                    latest_1st = words_in_cut_1st[-1]["end"] if words_in_cut_1st else 0.0
+                    latest_2nd = words_cut[-1]["end"] if words_cut else 0.0
+                    combined_last = max(latest_1st, latest_2nd)
+
+                    if first_is_normal and combined_first > leading_threshold and combined_first < float("inf"):
+                        cut_end = max(0.0, combined_first - 0.2)
+                        if cut_end > 0.05:
+                            oversized_2nd.append({"start": 0.0, "end": cut_end})
                             logger.info(
-                                "冒頭無発話: words_cut[0].start=%.2fs だが上限 %.1fs で制限",
-                                words_cut[0]["start"], LEADING_MAX_TRIM,
-                            )
-                        if clamped_end > 0.05:
-                            oversized_2nd.append({"start": 0.0, "end": clamped_end})
-                            logger.info(
-                                "冒頭無発話: 0.0-%.2fs を削除候補に追加", clamped_end,
+                                "冒頭無発話: 0.0-%.2fs を削除候補に追加 "
+                                "(1段目=%.2fs, 2段目=%.2fs の小さい方)",
+                                cut_end, earliest_1st, earliest_2nd,
                             )
                     elif not first_is_normal:
                         logger.info(
                             "冒頭 word が oversized(%.2fs) → 施策G スキップ、施策F に委任",
                             first_dur,
                         )
-                    if last_is_normal and words_cut[-1]["end"] < cut_duration_pre - trailing_threshold:
-                        proposed_start = words_cut[-1]["end"] + 0.2
-                        max_trail = cut_duration_pre - TRAILING_MAX_TRIM
-                        clamped_start = max(proposed_start, max_trail)
-                        if proposed_start < max_trail:
+                    if last_is_normal and combined_last < cut_duration_pre - trailing_threshold:
+                        cut_start = combined_last + 0.2
+                        if cut_duration_pre - cut_start > 0.05:
+                            oversized_2nd.append({"start": cut_start, "end": cut_duration_pre})
                             logger.info(
-                                "末尾無発話: 削除幅が上限 %.1fs を超えるため制限",
-                                TRAILING_MAX_TRIM,
-                            )
-                        if cut_duration_pre - clamped_start > 0.05:
-                            oversized_2nd.append({"start": clamped_start, "end": cut_duration_pre})
-                            logger.info(
-                                "末尾無発話: %.2f-%.2fs を削除候補に追加",
-                                clamped_start, cut_duration_pre,
+                                "末尾無発話: %.2f-%.2fs を削除候補に追加 "
+                                "(1段目=%.2fs, 2段目=%.2fs の大きい方)",
+                                cut_start, cut_duration_pre, latest_1st, latest_2nd,
                             )
                     elif not last_is_normal:
                         logger.info(
