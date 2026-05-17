@@ -26,6 +26,7 @@ from app.services.subtitle import (
     transcribe_audio, transcribe_with_words, segments_to_srt, segments_to_ass,
     words_to_segments, apply_keyword_highlight,
 )
+from app.config import CTA_TEXT
 from app.services.jump_cut import (
     detect_filler_ranges, detect_tempo_ranges, detect_redundant_speech,
     detect_word_gaps, detect_oversized_words, load_fillers, merge_ranges,
@@ -628,8 +629,8 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             if not hook_text_str:
                 jump_cut_notes.append("フック生成をスキップしました（LLM未設定または失敗）")
 
-            # CTA
-            cta_text_str = "👇 保存して見返してね"
+            # CTA (config から読み、絵文字豆腐を避けるため CJK 対応文字を使用)
+            cta_text_str = CTA_TEXT
 
             # BGM
             bgm_source_text = hook_source_text or (

@@ -570,7 +570,7 @@ def apply_pipeline_combined(
     hook_font_size: int = 80,
     cta_text: str | None = None,
     cta_duration: float = 3.0,
-    cta_font_size: int = 110,
+    cta_font_size: int = 80,  # 顔を隠さないサイズ。画面下部 y=h*0.82 に配置
     bgm_path: str | None = None,
     bgm_volume: float = 0.12,
     bgm_fade: float = 1.5,
@@ -652,14 +652,14 @@ def apply_pipeline_combined(
             f"drawtext=textfile={cta_file}"
             f":fontfile={font_file}:fontsize={cta_size}"
             f":fontcolor=black:box=1:boxcolor=black@0.9:boxborderw=35"
-            f":x=(w-text_w)/2:y=h*0.42"
+            f":x=(w-text_w)/2:y=h*0.82"
             f":enable='gt(t\\,{cta_start:.3f})'"
         )
         video_filters.append(
             f"drawtext=textfile={cta_file}"
             f":fontfile={font_file}:fontsize={cta_size}"
             f":fontcolor=yellow:borderw=4:bordercolor=black"
-            f":x=(w-text_w)/2:y=h*0.42"
+            f":x=(w-text_w)/2:y=h*0.82"
             f":alpha='if(gt(t\\,{cta_start:.3f})\\,if(eq(mod(floor((t-{cta_start:.3f})*2)\\,2)\\,0)\\,1\\,0.5)\\,0)'"
         )
 
