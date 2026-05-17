@@ -163,3 +163,83 @@ def test_subtitle_module_reexports_transcribe_with_words():
     """後方互換: from app.services.subtitle import transcribe_with_words が動く。"""
     from app.services.subtitle import transcribe_with_words as tww
     assert tww is asr.transcribe_with_words
+
+
+# === ReazonSpeech state error recovery (fix-reazonspeech-model-state-leak) ===
+
+def test_is_state_error_detects_freeze_keywords():
+    assert asr._is_state_error(Exception("Cannot unfreeze partially without first freezing"))
+    assert asr._is_state_error(Exception("freeze() must be called"))
+    assert asr._is_state_error(Exception("partial state mismatch"))
+    assert not asr._is_state_error(Exception("audio file not found"))
+    assert not asr._is_state_error(Exception("CUDA out of memory"))
+
+
+def _make_loader_with_cache_clear(model, cleared: dict) -> callable:
+    """cache_clear 属性を持つ fake loader を作る。"""
+    def loader():
+        return model
+    def cache_clear():
+        cleared["count"] += 1
+    loader.cache_clear = cache_clear
+    return loader
+
+
+def test_reazonspeech_retries_on_state_error_with_cache_clear(monkeypatch):
+    """state error 発生時、 cache_clear → fresh load → retry が走り成功する。"""
+    cleared = {"count": 0}
+    fake_model = SimpleNamespace(freeze=lambda: None)
+    monkeypatch.setattr(asr, "_load_reazonspeech_model", _make_loader_with_cache_clear(fake_model, cleared))
+
+    call_count = {"n": 0}
+    fake_result = SimpleNamespace(
+        subwords=[SimpleNamespace(seconds=0.0, token="あ")],
+        segments=[SimpleNamespace(start_seconds=0.0, end_seconds=0.5, text="あ")],
+    )
+
+    def fake_transcribe(model, audio):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise Exception("Cannot unfreeze partially without first freezing")
+        return fake_result
+
+    import sys
+    fake_module = SimpleNamespace(
+        audio_from_path=lambda p: SimpleNamespace(samples=[], rate=16000),
+        transcribe=fake_transcribe,
+    )
+    sys.modules["reazonspeech.nemo.asr"] = fake_module
+
+    try:
+        result = asr._transcribe_with_reazonspeech("/tmp/x.wav")
+        assert result is not None
+        words, _ = result
+        assert len(words) == 1
+        assert cleared["count"] == 1  # cache_clear が 1 回呼ばれた
+        assert call_count["n"] == 2  # transcribe が 2 回呼ばれた (retry あり)
+    finally:
+        sys.modules.pop("reazonspeech.nemo.asr", None)
+
+
+def test_reazonspeech_no_retry_for_non_state_error(monkeypatch):
+    """state 以外のエラー (file not found 等) は retry せず None を返す。"""
+    cleared = {"count": 0}
+    fake_model = SimpleNamespace(freeze=lambda: None)
+    monkeypatch.setattr(asr, "_load_reazonspeech_model", _make_loader_with_cache_clear(fake_model, cleared))
+
+    def fake_audio_from_path(p):
+        raise FileNotFoundError("audio not found")
+
+    import sys
+    fake_module = SimpleNamespace(
+        audio_from_path=fake_audio_from_path,
+        transcribe=lambda model, audio: None,
+    )
+    sys.modules["reazonspeech.nemo.asr"] = fake_module
+
+    try:
+        result = asr._transcribe_with_reazonspeech("/tmp/nonexistent.wav")
+        assert result is None
+        assert cleared["count"] == 0  # cache_clear は呼ばれない
+    finally:
+        sys.modules.pop("reazonspeech.nemo.asr", None)

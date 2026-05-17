@@ -107,6 +107,27 @@ def _filter_words_by_segments(words: list[dict], segments: list[dict]) -> list[d
     return remapped
 
 
+def _dedup_leading_against_third(
+    leading: list[dict], third: list[dict], window: int = 10,
+) -> list[dict]:
+    """leading の末尾と third の先頭が同じ text の subsequence を含む場合、
+    leading から重複分を削除する。
+
+    1段目 ASR (remap 後) と 3段目 ASR (直接 transcribe) が同じ発話を
+    異なる時刻で認識した場合に、 字幕が冒頭 2 連続で同じ内容になる現象を防ぐ。
+    """
+    if not leading or not third:
+        return leading
+    n = min(window, len(leading), len(third))
+    best = 0
+    for k in range(1, n + 1):
+        if [w["text"] for w in leading[-k:]] == [w["text"] for w in third[:k]]:
+            best = k
+    if best > 0:
+        return leading[:-best]
+    return leading
+
+
 def _hybrid_prepend_leading_words(
     third_words: list[dict],
     first_stage_words_in_target: list[dict],
@@ -120,6 +141,9 @@ def _hybrid_prepend_leading_words(
     3段目 first_word.start が動画長 × ratio (最低 min 秒) を超える場合、
     1段目 words を target 時刻空間に remap した結果から、
     first_word.start - margin より前の word を抽出し、 sort して prepend する。
+
+    最後に leading の末尾と 3段目の先頭の text 重複を dedup する
+    (1段目 remap の時刻ずれで同じ発話が二重表示されるバグを回避)。
 
     Args:
         third_words: 3段目 transcribe (cut2 or cut.mp4) の words
@@ -148,6 +172,15 @@ def _hybrid_prepend_leading_words(
     if not leading:
         return third_words, 0
     leading.sort(key=lambda w: w["start"])
+    before_dedup = len(leading)
+    leading = _dedup_leading_against_third(leading, third_words)
+    if len(leading) < before_dedup:
+        logger.info(
+            "hybrid leading dedup: %d → %d words (削除 %d)",
+            before_dedup, len(leading), before_dedup - len(leading),
+        )
+    if not leading:
+        return third_words, 0
     return leading + third_words, len(leading)
 
 

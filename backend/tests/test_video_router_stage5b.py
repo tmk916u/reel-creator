@@ -196,3 +196,90 @@ def test_hybrid_prepend_respects_margin_and_sorts():
     assert out[0]["text"] == "客"
     assert out[1]["text"] == "様"
     assert out[2]["text"] == "目"
+
+
+# === hybrid leading dedup (fix-hybrid-leading-duplicate) ===
+
+def test_dedup_leading_against_third_full_match():
+    """leading 末尾と third 先頭が完全一致 → 末尾分を leading から削除。"""
+    from app.routers.video import _dedup_leading_against_third
+
+    leading = [
+        {"start": 0.0, "end": 0.3, "text": "客"},
+        {"start": 0.3, "end": 0.6, "text": "様"},
+        {"start": 0.6, "end": 0.9, "text": "が"},
+    ]
+    third = [
+        {"start": 3.0, "end": 3.3, "text": "客"},
+        {"start": 3.3, "end": 3.6, "text": "様"},
+        {"start": 3.6, "end": 3.9, "text": "が"},
+        {"start": 3.9, "end": 4.2, "text": "悩"},
+    ]
+    out = _dedup_leading_against_third(leading, third)
+    # leading 末尾 3 word が third 先頭 3 word と一致 → leading 全削除
+    assert out == []
+
+
+def test_dedup_leading_against_third_no_overlap():
+    """leading 末尾と third 先頭に重複なし → leading 全体保持。"""
+    from app.routers.video import _dedup_leading_against_third
+
+    leading = [
+        {"start": 0.0, "end": 0.3, "text": "あ"},
+        {"start": 0.3, "end": 0.6, "text": "い"},
+    ]
+    third = [
+        {"start": 3.0, "end": 3.3, "text": "う"},
+        {"start": 3.3, "end": 3.6, "text": "え"},
+    ]
+    out = _dedup_leading_against_third(leading, third)
+    assert out == leading
+
+
+def test_dedup_leading_against_third_partial_overlap():
+    """leading 末尾 2 word が third 先頭 2 word と一致 → 2 word 削除。"""
+    from app.routers.video import _dedup_leading_against_third
+
+    leading = [
+        {"start": 0.0, "end": 0.3, "text": "ダ"},
+        {"start": 0.3, "end": 0.6, "text": "イ"},
+        {"start": 0.6, "end": 0.9, "text": "エ"},
+        {"start": 0.9, "end": 1.2, "text": "ット"},
+    ]
+    third = [
+        {"start": 3.0, "end": 3.3, "text": "エ"},
+        {"start": 3.3, "end": 3.6, "text": "ット"},
+        {"start": 3.6, "end": 3.9, "text": "の"},
+    ]
+    out = _dedup_leading_against_third(leading, third)
+    assert [w["text"] for w in out] == ["ダ", "イ"]
+
+
+def test_hybrid_prepend_invokes_dedup():
+    """hybrid 補完で leading と 3 段目の重複 sequence が dedup される (統合テスト)。"""
+    from app.routers.video import _hybrid_prepend_leading_words
+
+    # 3段目: 「お客様が悩」 を 30 秒目で認識
+    third = [
+        {"start": 30.0, "end": 30.3, "text": "お"},
+        {"start": 30.3, "end": 30.6, "text": "客"},
+        {"start": 30.6, "end": 30.9, "text": "様"},
+        {"start": 30.9, "end": 31.2, "text": "が"},
+        {"start": 31.2, "end": 31.5, "text": "悩"},
+    ]
+    # 1段目補完: 同じ「お客様が悩」 が 0 秒目に remap されている (bug 再現)
+    first_in_target = [
+        {"start": 0.0, "end": 0.3, "text": "お"},
+        {"start": 0.3, "end": 0.6, "text": "客"},
+        {"start": 0.6, "end": 0.9, "text": "様"},
+        {"start": 0.9, "end": 1.2, "text": "が"},
+        {"start": 1.2, "end": 1.5, "text": "悩"},
+    ]
+    out, prepended = _hybrid_prepend_leading_words(
+        third_words=third,
+        first_stage_words_in_target=first_in_target,
+        target_duration=100.0,
+    )
+    # 完全重複なので leading は全削除 → 3 段目だけ残る
+    assert prepended == 0
+    assert out == third

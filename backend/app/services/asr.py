@@ -74,28 +74,62 @@ def _reazonspeech_result_to_words_segments(result) -> tuple[list[dict], list[dic
     return words, segments
 
 
+_STATE_ERROR_KEYWORDS = ("freeze", "unfreeze", "partial")
+
+
+def _is_state_error(err: Exception) -> bool:
+    """ReazonSpeech NeMo の freeze/unfreeze 系の状態破損エラーかを判定。"""
+    msg = str(err).lower()
+    return any(kw in msg for kw in _STATE_ERROR_KEYWORDS)
+
+
 def _transcribe_with_reazonspeech(audio_path: str) -> tuple[list[dict], list[dict]] | None:
-    """成功時 (words, segments)、失敗時 None."""
+    """成功時 (words, segments)、失敗時 None.
+
+    NeMo の transcribe() は同一プロセス内の連続呼出で
+    「Cannot unfreeze partially without first freezing」 等の
+    状態破損エラーを raise することがあるため、 検出時は
+    lru_cache を破棄して fresh load で 1 回 retry する。
+    """
     try:
         from reazonspeech.nemo.asr import audio_from_path, transcribe
     except Exception as e:
         logger.info("ReazonSpeech not available: %s", e)
         return None
 
-    try:
-        t0 = time.time()
-        model = _load_reazonspeech_model()
-        audio = audio_from_path(audio_path)
-        result = transcribe(model, audio)
-        words, segments = _reazonspeech_result_to_words_segments(result)
-        logger.info(
-            "ReazonSpeech: %d segments, %d subwords, %.1fs",
-            len(segments), len(words), time.time() - t0,
-        )
-        return words, segments
-    except Exception as e:
-        logger.warning("ReazonSpeech failed, falling back: %s", e)
-        return None
+    last_error: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            t0 = time.time()
+            model = _load_reazonspeech_model()
+            # 防御的に状態を強制リセット (NeMo の freeze() API)
+            try:
+                if hasattr(model, "freeze"):
+                    model.freeze()
+            except Exception:
+                pass
+            audio = audio_from_path(audio_path)
+            result = transcribe(model, audio)
+            words, segments = _reazonspeech_result_to_words_segments(result)
+            logger.info(
+                "ReazonSpeech: %d segments, %d subwords, %.1fs (attempt %d)",
+                len(segments), len(words), time.time() - t0, attempt,
+            )
+            return words, segments
+        except Exception as e:
+            last_error = e
+            if attempt == 1 and _is_state_error(e):
+                logger.warning(
+                    "ReazonSpeech state error on attempt 1, invalidating cache and retrying: %s",
+                    e,
+                )
+                if hasattr(_load_reazonspeech_model, "cache_clear"):
+                    _load_reazonspeech_model.cache_clear()
+                continue
+            break
+
+    logger.warning("ReazonSpeech failed, falling back: %s", last_error)
+    return None
 
 
 # === WhisperX ===
