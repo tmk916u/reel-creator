@@ -573,18 +573,25 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                                     words_in_cut_1st, cut2_voices,
                                 )
 
-                # 字幕用 words のマージ: 1段目+2段目を時刻順にマージし、近接の重複を dedup
-                # 「動画は残ったが字幕が出ない」現象を防ぐ
-                # (どちらか一方の ASR でも認識できた発話は字幕に反映する)
-                subtitle_words = _merge_word_streams(words_cut, words_in_cut_1st)
+                # 字幕用 words: 1段目を優先(元動画全体で文脈安定)、無い場合のみ 2段目に fallback。
+                # subword レベルのマージは破綻するため避ける(reel_d29b67ae で断片化発生)。
+                # 2段目 words は施策F の動画カット判定にのみ使う。
+                if words_in_cut_1st:
+                    subtitle_words = words_in_cut_1st
+                    logger.info(
+                        "字幕用 words: 1段目 transcribe を採用(%d words)",
+                        len(subtitle_words),
+                    )
+                else:
+                    subtitle_words = words_cut
+                    logger.info(
+                        "字幕用 words: 2段目 transcribe を採用(1段目が空、%d words)",
+                        len(subtitle_words),
+                    )
 
                 if subtitle_words:
                     sub_segments = words_to_segments(
                         subtitle_words, max_chars=settings.subtitle_max_chars,
-                    )
-                elif words_cut:
-                    sub_segments = words_to_segments(
-                        words_cut, max_chars=settings.subtitle_max_chars,
                     )
                 else:
                     sub_segments = segs_cut
