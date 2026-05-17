@@ -421,6 +421,57 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
           </div>
         )}
 
+        {/* トピックテロップのスタイル */}
+        <div>
+          <label className="block text-sm text-gray-300 mb-2">
+            🎨 トピックテロップのスタイル
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              ["default", "🎬 派手"],
+              ["sleek", "✨ シック"],
+              ["clean", "🩺 クリーン"],
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setSettings((s) => ({ ...s, topic_style: key }))}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  (settings.topic_style ?? "default") === key
+                    ? "bg-purple-500 text-white"
+                    : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            右上の番号バッジ + テーマラベルの色味（バズモード時のみ表示）
+          </p>
+        </div>
+
+        {/* 効果音 */}
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-300">🔊 効果音(カット境界)</span>
+          <button
+            onClick={() =>
+              setSettings((s) => ({ ...s, enable_sfx: !s.enable_sfx }))
+            }
+            className={`relative w-12 h-6 rounded-full transition-colors ${
+              settings.enable_sfx ? "bg-pink-500" : "bg-gray-600"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                settings.enable_sfx ? "translate-x-6" : ""
+              }`}
+            />
+          </button>
+        </div>
+        <p className="text-xs text-gray-500 -mt-3">
+          backend/app/data/sfx/cut.mp3 を配置すると鳴ります
+        </p>
+
         {/* バズモード */}
         <div>
           <div className="flex items-center justify-between">

@@ -555,6 +555,54 @@ def _fit_overlay_text(
     return f"{line1}\n{line2}", new_size
 
 
+def _topic_style_config(style: str) -> dict:
+    """topic_style に応じた drawtext パラメータを返す。
+
+    - default: 黄色矩形(番号) + ピンク矩形(ラベル) ※従来の派手系
+    - sleek:   半透明黒(番号) + ゴールド文字 / 半透明黒帯(ラベル) + 白 ※シック大人
+    - clean:   白矩形 + ネイビー文字(番号) / ネイビー帯 + 白文字(ラベル) ※整体・健康系の清潔感
+    """
+    if style == "sleek":
+        return {
+            "num_fontcolor": "0xFFD700",
+            "num_boxcolor": "black@0.65",
+            "num_borderw": 4,
+            "num_bordercolor": "0xFFD700",
+            "num_shadow": ":shadowx=4:shadowy=4:shadowcolor=black@0.5",
+            "label_fontcolor": "white",
+            "label_boxcolor": "black@0.7",
+            "label_borderw": 0,
+            "label_bordercolor": "black",
+            "label_shadow": ":shadowx=3:shadowy=3:shadowcolor=black@0.5",
+        }
+    if style == "clean":
+        return {
+            "num_fontcolor": "0x1A2F4F",
+            "num_boxcolor": "white@0.95",
+            "num_borderw": 3,
+            "num_bordercolor": "0x1A2F4F",
+            "num_shadow": ":shadowx=3:shadowy=3:shadowcolor=0x1A2F4F@0.3",
+            "label_fontcolor": "white",
+            "label_boxcolor": "0x1A2F4F@0.95",
+            "label_borderw": 0,
+            "label_bordercolor": "black",
+            "label_shadow": ":shadowx=2:shadowy=2:shadowcolor=black@0.4",
+        }
+    # default
+    return {
+        "num_fontcolor": "black",
+        "num_boxcolor": "yellow@0.95",
+        "num_borderw": 0,
+        "num_bordercolor": "black",
+        "num_shadow": "",
+        "label_fontcolor": "white",
+        "label_boxcolor": "0xE91E63@0.92",
+        "label_borderw": 3,
+        "label_bordercolor": "black",
+        "label_shadow": "",
+    }
+
+
 def apply_pipeline_combined(
     input_video: str,
     output_video: str,
@@ -577,11 +625,13 @@ def apply_pipeline_combined(
     sfx_path: str | None = None,
     sfx_timestamps_sec: list[float] | None = None,
     sfx_volume: float = 0.15,
+    topic_style: str = "default",  # default | sleek | clean
 ) -> str:
     """すべての動画オーバーレイ・音響処理を1つの ffmpeg パスでまとめて適用する。
 
     現状の chain（subtitle→topics→hook→cta→bgm）を 6 パスから 1 パスに圧縮。
     """
+    style_cfg = _topic_style_config(topic_style)
     font_file = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
     total_dur = get_video_duration(input_video)
 
@@ -610,21 +660,35 @@ def apply_pipeline_combined(
             label = (t.get("label") or "").strip()
             num_file = workdir / f"topic_num_{i}.txt"
             num_file.write_text(number_char, encoding="utf-8")
+            num_borderw = style_cfg["num_borderw"]
+            border_part = (
+                f":borderw={num_borderw}:bordercolor={style_cfg['num_bordercolor']}"
+                if num_borderw > 0 else ""
+            )
             video_filters.append(
                 f"drawtext=textfile={num_file}"
                 f":fontfile={font_file}:fontsize={topic_number_size}"
-                f":fontcolor=black:box=1:boxcolor=yellow@0.95:boxborderw=20"
+                f":fontcolor={style_cfg['num_fontcolor']}"
+                f":box=1:boxcolor={style_cfg['num_boxcolor']}:boxborderw=20"
+                f"{border_part}{style_cfg['num_shadow']}"
                 f":x=w-text_w-50:y=80"
                 f":enable='between(t\\,{start_t:.3f}\\,{end_t:.3f})'"
             )
             if label:
                 label_file = workdir / f"topic_label_{i}.txt"
                 label_file.write_text(label, encoding="utf-8")
+                lbl_borderw = style_cfg["label_borderw"]
+                lbl_border_part = (
+                    f":borderw={lbl_borderw}:bordercolor={style_cfg['label_bordercolor']}"
+                    if lbl_borderw > 0 else ""
+                )
                 video_filters.append(
                     f"drawtext=textfile={label_file}"
                     f":fontfile={font_file}:fontsize={topic_label_size}"
-                    f":fontcolor=white:borderw=3:bordercolor=black"
-                    f":box=1:boxcolor=0xE91E63@0.92:boxborderw=18"
+                    f":fontcolor={style_cfg['label_fontcolor']}"
+                    f"{lbl_border_part}"
+                    f":box=1:boxcolor={style_cfg['label_boxcolor']}:boxborderw=18"
+                    f"{style_cfg['label_shadow']}"
                     f":x=w-text_w-50:y=80+{topic_number_size}+50"
                     f":enable='between(t\\,{start_t:.3f}\\,{end_t:.3f})'"
                 )

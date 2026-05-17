@@ -24,6 +24,8 @@ export interface ProcessSettings {
   word_gap_target?: number;
   max_word_duration?: number;
   micro_silence_min_duration?: number;
+  topic_style?: "default" | "sleek" | "clean";
+  enable_sfx?: boolean;
   subtitle_max_chars?: number;
   trim_leading_silence?: boolean;
   skip_preview?: boolean;  // 字幕プレビューを飛ばして直接処理に進む（量産モード）

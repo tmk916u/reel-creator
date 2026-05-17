@@ -574,9 +574,9 @@ def _run_processing(job_id: str, settings: ProcessRequest):
 
         # Stage 6: バズモード — トピック・フック・CTA・BGM・効果音 のパラメータ準備
         if settings.enable_buzz_mode:
-            # 効果音タイムスタンプ
+            # 効果音タイムスタンプ(enable_sfx ON かつファイル配置時のみ)
             sfx_p = Path("/app/app/data/sfx/cut.mp3")
-            if sfx_p.exists() and len(voice_segments) >= 2:
+            if settings.enable_sfx and sfx_p.exists() and len(voice_segments) >= 2:
                 cum = 0.0
                 cut_points: list[float] = []
                 for i, vs in enumerate(voice_segments):
@@ -666,6 +666,7 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                     bgm_path=bgm_path_str,
                     sfx_path=sfx_path_str,
                     sfx_timestamps_sec=sfx_timestamps_list,
+                    topic_style=settings.topic_style,
                 )
                 final_output = str(output_path)
             except Exception as e:

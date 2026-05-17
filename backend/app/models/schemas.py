@@ -49,6 +49,8 @@ class ProcessRequest(BaseModel):
     # 0 にすると無効。
     subtitle_max_chars: int = 12  # 1字幕の最大文字数（リール用は短め推奨）
     trim_leading_silence: bool = False  # 互換のため残す（現状は no-op、VAD が冒頭無音を自動削除）
+    topic_style: str = "default"  # トピックテロップのスタイル: default | sleek | clean
+    enable_sfx: bool = False  # 効果音をカット境界に挿入(data/sfx/cut.mp3 を配置していれば動作)
     enable_subtitles: bool = False
     enable_jump_cut: bool = False
     enable_buzz_mode: bool = False  # 冒頭フック + モーション字幕
