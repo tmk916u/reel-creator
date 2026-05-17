@@ -194,7 +194,47 @@ class _CorrectionsResponse(BaseModel):
     corrections: list[_CorrectionItem] = Field(default_factory=list)
 
 
-def correct_transcript_segments(segments: list[str]) -> list[str]:
+class _SummaryResponse(BaseModel):
+    summary: str = ""
+
+
+def summarize_video_context(transcript_text: str) -> str:
+    """動画 transcript を 1〜2 文で要約し、後続 LLM の文脈ヒントとして返す。
+
+    校正・HOOK・キーワード抽出など複数の LLM 呼出で「動画の核心は何か」を
+    共有することで、ジャンルごとに辞書を増やさなくても誤認識の文脈推論が
+    効くようになる(イタチごっこ対策)。
+
+    LLM 未設定・失敗時は空文字。
+    """
+    if not transcript_text.strip():
+        return ""
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    if provider not in ("openai", "anthropic"):
+        return ""
+    if provider == "openai" and not os.getenv("OPENAI_API_KEY"):
+        return ""
+    if provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
+        return ""
+
+    text = transcript_text[:1500]
+    try:
+        if provider == "openai":
+            raw = _call_openai(text, system_prompt=_SUMMARIZE_CONTEXT_PROMPT)
+        else:
+            raw = _call_anthropic(text, system_prompt=_SUMMARIZE_CONTEXT_PROMPT)
+        payload = _extract_json(raw)
+        parsed = _SummaryResponse.model_validate(payload)
+    except (ValidationError, json.JSONDecodeError, Exception) as e:
+        logger.warning("Video context summary failed: %s", e)
+        return ""
+    summary = parsed.summary.strip()
+    if summary:
+        logger.info("Video context summary: %s", summary)
+    return summary
+
+
+def correct_transcript_segments(segments: list[str], video_context: str = "") -> list[str]:
     """LLM で字幕セグメントの誤認識を校正する。
 
     入力と同じ長さのリストを返す。LLM 未設定・失敗時は入力をそのまま返す。
@@ -213,12 +253,13 @@ def correct_transcript_segments(segments: list[str]) -> list[str]:
         return segments
 
     user_message = "\n".join(f"[{i}] {s}" for i, s in enumerate(segments))
+    correction_prompt = _with_context(_CORRECTION_SYSTEM_PROMPT, video_context)
 
     try:
         if provider == "openai":
-            raw = _call_openai(user_message, system_prompt=_CORRECTION_SYSTEM_PROMPT)
+            raw = _call_openai(user_message, system_prompt=correction_prompt)
         else:
-            raw = _call_anthropic(user_message, system_prompt=_CORRECTION_SYSTEM_PROMPT)
+            raw = _call_anthropic(user_message, system_prompt=correction_prompt)
         payload = _extract_json(raw)
         parsed = _CorrectionsResponse.model_validate(payload)
     except (ValidationError, json.JSONDecodeError, Exception) as e:
@@ -255,11 +296,12 @@ def correct_transcript_segments(segments: list[str]) -> list[str]:
     if rejected_indices:
         retry_segs = [(i, segments[i]) for i in rejected_indices]
         retry_user = "\n".join(f"[{n}] {s}" for n, (_, s) in enumerate(retry_segs))
+        retry_prompt = _with_context(_CORRECTION_RETRY_PROMPT, video_context)
         try:
             if provider == "openai":
-                raw2 = _call_openai(retry_user, system_prompt=_CORRECTION_RETRY_PROMPT)
+                raw2 = _call_openai(retry_user, system_prompt=retry_prompt)
             else:
-                raw2 = _call_anthropic(retry_user, system_prompt=_CORRECTION_RETRY_PROMPT)
+                raw2 = _call_anthropic(retry_user, system_prompt=retry_prompt)
             payload2 = _extract_json(raw2)
             parsed2 = _CorrectionsResponse.model_validate(payload2)
             for it in parsed2.corrections:
@@ -282,6 +324,34 @@ def correct_transcript_segments(segments: list[str]) -> list[str]:
         applied, rejected, retry_applied, len(segments),
     )
     return result
+
+
+_SUMMARIZE_CONTEXT_PROMPT = """あなたは動画の文脈把握アシスタントです。
+入力された日本語の動画 transcript(誤認識を含む可能性あり)を読み、
+**動画の核心を 1〜2 文(80文字以内)** で要約してください。
+
+要約は後続の校正・字幕生成・HOOK 生成 LLM が「この動画は何の話か」を
+理解するための文脈情報として使われます。話者の専門・トピック・主張を
+具体的に書く(例:「整体師が食事と健康の関係について解説。暴飲暴食を翌日
+リセットすることが大切と主張」)。
+
+出力 JSON: {"summary": "..."}"""
+
+
+def _with_context(system_prompt: str, video_context: str) -> str:
+    """system_prompt の末尾に「動画の文脈」を追加する。
+
+    文脈は誤認識を補正したり、自然な表現を選ぶための補助情報として
+    LLM に渡る。video_context が空なら system_prompt をそのまま返す。
+    """
+    if not video_context:
+        return system_prompt
+    return (
+        f"{system_prompt}\n\n"
+        f"# この動画の文脈(必ず参考にする)\n"
+        f"{video_context}\n\n"
+        f"判断に迷う誤認識・不自然な表現があれば、上記文脈に合う表現を選んでください。"
+    )
 
 
 _CORRECTION_RETRY_PROMPT = """あなたは日本語字幕の控えめな校正アシスタントです。
@@ -315,7 +385,7 @@ class _KeywordsResponse(BaseModel):
     keywords: list[str] = Field(default_factory=list)
 
 
-def extract_keywords(transcript_text: str, max_keywords: int = 8) -> list[str]:
+def extract_keywords(transcript_text: str, max_keywords: int = 8, video_context: str = "") -> list[str]:
     """LLM で動画の文字起こしから強調すべきキーワードを抽出する。
 
     LLM 未設定・失敗時は空リストを返す。
@@ -331,11 +401,12 @@ def extract_keywords(transcript_text: str, max_keywords: int = 8) -> list[str]:
     if provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
         return []
 
+    keywords_prompt = _with_context(_KEYWORDS_SYSTEM_PROMPT, video_context)
     try:
         if provider == "openai":
-            raw = _call_openai(transcript_text, system_prompt=_KEYWORDS_SYSTEM_PROMPT)
+            raw = _call_openai(transcript_text, system_prompt=keywords_prompt)
         else:
-            raw = _call_anthropic(transcript_text, system_prompt=_KEYWORDS_SYSTEM_PROMPT)
+            raw = _call_anthropic(transcript_text, system_prompt=keywords_prompt)
         payload = _extract_json(raw)
         parsed = _KeywordsResponse.model_validate(payload)
     except (ValidationError, json.JSONDecodeError, Exception) as e:
@@ -373,7 +444,7 @@ class _HookResponse(BaseModel):
     hook: str = ""
 
 
-def generate_hook(transcript_text: str) -> str:
+def generate_hook(transcript_text: str, video_context: str = "") -> str:
     """LLM で動画の冒頭フックテキストを生成する。
 
     LLM 未設定・失敗時は空文字を返す。
@@ -389,11 +460,12 @@ def generate_hook(transcript_text: str) -> str:
     if provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
         return ""
 
+    hook_prompt = _with_context(_GENERATE_HOOK_SYSTEM_PROMPT, video_context)
     try:
         if provider == "openai":
-            raw = _call_openai(transcript_text, system_prompt=_GENERATE_HOOK_SYSTEM_PROMPT)
+            raw = _call_openai(transcript_text, system_prompt=hook_prompt)
         else:
-            raw = _call_anthropic(transcript_text, system_prompt=_GENERATE_HOOK_SYSTEM_PROMPT)
+            raw = _call_anthropic(transcript_text, system_prompt=hook_prompt)
         payload = _extract_json(raw)
         parsed = _HookResponse.model_validate(payload)
     except (ValidationError, json.JSONDecodeError, Exception) as e:
@@ -435,7 +507,7 @@ class _TopicsResponse(BaseModel):
     topics: list[_TopicItem] = Field(default_factory=list)
 
 
-def detect_topics(segments: list[str], max_topics: int = 4) -> list[dict]:
+def detect_topics(segments: list[str], max_topics: int = 4, video_context: str = "") -> list[dict]:
     """LLM で動画から話のポイント（章）を検出する。
 
     Args:
@@ -460,9 +532,9 @@ def detect_topics(segments: list[str], max_topics: int = 4) -> list[dict]:
 
     try:
         if provider == "openai":
-            raw = _call_openai(user_message, system_prompt=_TOPICS_SYSTEM_PROMPT)
+            raw = _call_openai(user_message, system_prompt=_with_context(_TOPICS_SYSTEM_PROMPT, video_context))
         else:
-            raw = _call_anthropic(user_message, system_prompt=_TOPICS_SYSTEM_PROMPT)
+            raw = _call_anthropic(user_message, system_prompt=_with_context(_TOPICS_SYSTEM_PROMPT, video_context))
         payload = _extract_json(raw)
         parsed = _TopicsResponse.model_validate(payload)
     except (ValidationError, json.JSONDecodeError, Exception) as e:

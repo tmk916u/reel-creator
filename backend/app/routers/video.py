@@ -35,6 +35,7 @@ from app.services.jump_cut import (
 from app.services.llm import (
     detect_restatements, correct_transcript_segments, extract_keywords, generate_hook,
     detect_topics, select_bgm_style, generate_captions, predict_buzz_score,
+    summarize_video_context,
 )
 from app.services.vad import detect_silence_silero, snap_silences_to_word_boundaries
 
@@ -485,20 +486,25 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 else:
                     sub_segments = segs_cut
 
+            # 動画の文脈サマリーを LLM で生成(辞書追加なしに「動画の核心」を共有)
+            # 校正/キーワード抽出/HOOK 生成 などの後続 LLM 呼出すべてに共通の文脈として渡す
+            pre_correction_text = " ".join(s["text"] for s in sub_segments)
+            video_context = summarize_video_context(pre_correction_text)
+
             if not edited_provided:
                 # 辞書置換 → LLM校正（編集済みなら適用しない）
                 for seg in sub_segments:
                     seg["text"] = apply_corrections_to_text(seg["text"], corrections)
 
                 texts = [s["text"] for s in sub_segments]
-                corrected_texts = correct_transcript_segments(texts)
+                corrected_texts = correct_transcript_segments(texts, video_context=video_context)
                 for seg, new_text in zip(sub_segments, corrected_texts):
                     seg["text"] = new_text
 
             # キーワードハイライト（常時ON）— LLM でキーワード抽出
             full_text = " ".join(s["text"] for s in sub_segments)
             # キーワードは1動画あたり3-4語に絞ると視覚ノイズが減って読みやすい
-            keywords = extract_keywords(full_text, max_keywords=4)
+            keywords = extract_keywords(full_text, max_keywords=4, video_context=video_context)
 
             # バズモード時は ASS でモーション字幕、それ以外は SRT
             has_word_data = any(s.get("words") for s in sub_segments)
@@ -597,7 +603,7 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             if sub_segments and len(sub_segments) >= 4:
                 job.update({"stage": "buzz_topics", "progress": 80, "message": "ポイントを抽出中..."})
                 texts_for_topics = [s["text"] for s in sub_segments]
-                topics_raw = detect_topics(texts_for_topics)
+                topics_raw = detect_topics(texts_for_topics, video_context=video_context)
                 tlist: list[dict] = []
                 for i, t in enumerate(topics_raw):
                     seg_idx = t["start_seg"]
@@ -625,7 +631,7 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 hook_source_text = " ".join(s["text"] for s in sub_segments)
             elif words:
                 hook_source_text = " ".join(w["text"] for w in words)
-            hook_text_str = generate_hook(hook_source_text) if hook_source_text else None
+            hook_text_str = generate_hook(hook_source_text, video_context=video_context) if hook_source_text else None
             if not hook_text_str:
                 jump_cut_notes.append("フック生成をスキップしました（LLM未設定または失敗）")
 
