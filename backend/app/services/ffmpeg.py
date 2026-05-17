@@ -22,16 +22,21 @@ def get_video_duration(filepath: str) -> float:
 def extract_audio(video_path: str, output_path: str, preprocess: bool = True) -> str:
     """動画から音声を WAV で抽出する（既定で前処理あり）。
 
-    preprocess=True の場合、ffmpeg の audio filter で以下を適用:
+    preprocess=True の場合、ffmpeg の audio filter で以下を順に適用:
+    - highpass=f=80: 80Hz 以下の低音域ヒスノイズをカット (子音明瞭化)
     - afftdn (FFT ベースのノイズ除去): ジム BGM や環境音の定常ノイズを軽減
-    - dynaudnorm (動的音量正規化): 自撮りの声量ムラを平滑化
+    - loudnorm (EBU R128 正規化): 平均ラウドネスを -16 LUFS、 TP=-1.5 に揃える
     これにより ASR (ReazonSpeech/WhisperX) の認識精度が安定する。
     """
     cmd = ["ffmpeg", "-y", "-i", video_path, "-vn"]
     if preprocess:
-        # nr=12: 中程度の削減（声を潰さず BGM を軽減）
-        # dynaudnorm p=0.95 f=200: 200ms フレームで動的正規化、ピーク95%
-        cmd += ["-af", "afftdn=nr=12,dynaudnorm=p=0.95:f=200"]
+        # highpass f=80: 子音 (S/T/K) の明瞭度を上げ低音域ヒスノイズを削除
+        # afftdn nr=12: 中程度の削減（声を潰さず BGM を軽減）
+        # loudnorm I=-16: SNS 動画標準の平均ラウドネス、 ReazonSpeech 安定動作帯
+        cmd += [
+            "-af",
+            "highpass=f=80,afftdn=nr=12,loudnorm=I=-16:LRA=11:TP=-1.5",
+        ]
     cmd += [
         "-acodec", "pcm_s16le",
         "-ar", "16000", "-ac", "1",

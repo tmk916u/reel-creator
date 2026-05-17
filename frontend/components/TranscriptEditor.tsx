@@ -89,12 +89,16 @@ export default function TranscriptEditor({
         {segments.map((seg, i) => {
           const original = initialSegments[i]?.text ?? "";
           const changed = seg.text !== original;
+          // suspicious: backend のヒューリスティック判定。 編集すると解除
+          const suspicious = (initialSegments[i]?.suspicious ?? false) && !changed;
           return (
             <div
               key={i}
               className={`group p-3 rounded-xl transition-all ${
                 changed
                   ? "bg-yellow-500/10 border border-yellow-500/40 ring-1 ring-yellow-500/20"
+                  : suspicious
+                  ? "bg-red-500/10 border border-red-500/50 ring-1 ring-red-500/30"
                   : "bg-gray-700/30 border border-transparent hover:border-gray-600"
               }`}
             >
@@ -108,6 +112,14 @@ export default function TranscriptEditor({
                   </span>
                   {changed && (
                     <span className="text-[10px] text-yellow-400 font-medium">編集済</span>
+                  )}
+                  {suspicious && (
+                    <span
+                      className="text-[10px] text-red-400 font-medium"
+                      title="誤認識の可能性が高い箇所です。 確認・修正してください"
+                    >
+                      ⚠ 要確認
+                    </span>
                   )}
                 </div>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

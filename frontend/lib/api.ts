@@ -12,6 +12,7 @@ export interface TranscriptSegment {
   start: number;
   end: number;
   text: string;
+  suspicious?: boolean;  // 誤認識候補なら true (赤字ハイライト用)
 }
 
 export interface ProcessSettings {

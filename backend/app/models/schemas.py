@@ -69,6 +69,7 @@ class TranscriptSegment(BaseModel):
     start: float
     end: float
     text: str
+    suspicious: bool = False  # 誤認識候補なら True (frontend で赤字ハイライト)
 
 
 class TranscribeResponse(BaseModel):

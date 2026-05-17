@@ -49,7 +49,7 @@ from app.services.silence import (
 )
 from app.services.subtitle import (
     transcribe_audio, transcribe_with_words, segments_to_srt, segments_to_ass,
-    words_to_segments, apply_keyword_highlight,
+    words_to_segments, apply_keyword_highlight, detect_suspicious_segments,
 )
 from app.config import CTA_TEXT
 from app.services.jump_cut import (
@@ -278,6 +278,8 @@ async def transcribe_preview(job_id: str, settings: TranscribeRequest):
     except Exception:
         pass
 
+    suspicious_flags = detect_suspicious_segments(sub_segments)
+
     return TranscribeResponse(
         job_id=job_id,
         segments=[
@@ -285,8 +287,9 @@ async def transcribe_preview(job_id: str, settings: TranscribeRequest):
                 start=round(s["start"], 3),
                 end=round(s["end"], 3),
                 text=s["text"],
+                suspicious=suspicious_flags[i] if i < len(suspicious_flags) else False,
             )
-            for s in sub_segments
+            for i, s in enumerate(sub_segments)
         ],
     )
 

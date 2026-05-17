@@ -2,6 +2,53 @@
 from pathlib import Path
 
 
+_SUSPICIOUS_BREAK = set("、ー　 ")  # 区切り記号(空白・読点・長音)
+_SUSPICIOUS_END = set("。!?")        # 文末記号
+
+
+def detect_suspicious_segments(segments: list[dict]) -> list[bool]:
+    """各 segment が誤認識候補かを判定する。 True なら frontend で赤字ハイライト。
+
+    検出ヒューリスティック (いずれかに該当で suspicious):
+    (a) text に区切り記号 (空白・読点・長音) を含み、 かつ全長 8 文字以下
+        (subword 断片化で「客 事への 食」 のようになる)
+    (b) 同一文字の 3 連続以上 (ASR 反復ミス、「ああある」 等)
+    (c) 句点・記号で始まる (segment 境界の不自然)
+    (d) 1-2 文字で文末記号で終わらない (孤立 subword 断片)
+
+    Returns: 各 segment に対する bool のリスト
+    """
+    result: list[bool] = []
+    for s in segments:
+        text = (s.get("text") or "").strip()
+        susp = False
+        if not text:
+            result.append(False)
+            continue
+
+        # (a) 区切り記号を含む 8 文字以下 (subword 断片)
+        if len(text) <= 8 and any(c in _SUSPICIOUS_BREAK for c in text):
+            susp = True
+
+        # (b) 同一文字の 3 連続
+        if not susp:
+            for i in range(len(text) - 2):
+                if text[i] == text[i + 1] == text[i + 2]:
+                    susp = True
+                    break
+
+        # (c) 句点・記号で始まる
+        if not susp and text[0] in "、。!?,.":
+            susp = True
+
+        # (d) 1-2 文字で文末記号でない
+        if not susp and 1 <= len(text) <= 2 and text[-1] not in _SUSPICIOUS_END:
+            susp = True
+
+        result.append(susp)
+    return result
+
+
 def _format_timestamp(seconds: float) -> str:
     """秒数をSRTタイムスタンプ形式に変換"""
     hours = int(seconds // 3600)

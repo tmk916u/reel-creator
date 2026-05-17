@@ -291,3 +291,49 @@ def test_merge_short_segments_respects_sentence_end():
     # 前段が「。」 で終わる → 統合しない
     out = _merge_short_segments(segments, min_chars=8, max_chars=14, min_dur=0.6)
     assert len(out) == 2
+
+
+# === detect_suspicious_segments (add-mishearing-highlight-preview) ===
+
+def test_detect_suspicious_subword_fragment():
+    """5 文字以下で 助詞・記号比率が高い segment は suspicious=true。"""
+    from app.services.subtitle import detect_suspicious_segments
+
+    segs = [
+        {"text": "客 事への 食"},  # 5 文字、 「 」+「、」 多めなので suspicious
+        {"text": "結論から言うと一番大事なのは"},  # 長い、 不審じゃない
+    ]
+    flags = detect_suspicious_segments(segs)
+    assert flags[0] is True
+    assert flags[1] is False
+
+
+def test_detect_suspicious_repeating_char():
+    """同一文字 3 連続は suspicious=true。"""
+    from app.services.subtitle import detect_suspicious_segments
+
+    segs = [{"text": "あああです"}]
+    flags = detect_suspicious_segments(segs)
+    assert flags[0] is True
+
+
+def test_detect_suspicious_starts_with_punctuation():
+    """句点・記号で始まる segment は suspicious=true。"""
+    from app.services.subtitle import detect_suspicious_segments
+
+    segs = [{"text": "、それは違う"}]
+    flags = detect_suspicious_segments(segs)
+    assert flags[0] is True
+
+
+def test_detect_suspicious_short_fragment():
+    """1-2 文字で文末記号でない segment は suspicious=true。"""
+    from app.services.subtitle import detect_suspicious_segments
+
+    segs = [
+        {"text": "客"},        # 1 文字、 文末記号でない → suspicious
+        {"text": "あ。"},      # 文末記号で終わる → 不審ではない
+    ]
+    flags = detect_suspicious_segments(segs)
+    assert flags[0] is True
+    assert flags[1] is False
