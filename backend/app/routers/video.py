@@ -459,17 +459,30 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                     )
                     # 施策G: ASR が word を一つも検出しなかった「冒頭・末尾の無発話」を削除
                     # VAD/silencedetect が拾えない呼吸音・環境音などが残るケースに対処
+                    # 施策G の発動条件:
+                    # 最初/最後の word が「通常 word」(duration < max_word_duration) の時のみ。
+                    # word が oversized(中に長い沈黙が埋もれている)の場合は施策F が処理するため、
+                    # 施策G で巻き込みカットすると実発話が消える(reel_fa362668 で発生)。
                     cut_duration_pre = get_video_duration(cut_output)
-                    leading_threshold = 1.0  # 1秒以上の無発話プレフィックスは削除
+                    leading_threshold = 1.0
                     trailing_threshold = 1.0
-                    if words_cut[0]["start"] > leading_threshold:
+                    first_dur = words_cut[0]["end"] - words_cut[0]["start"]
+                    last_dur = words_cut[-1]["end"] - words_cut[-1]["start"]
+                    first_is_normal = first_dur <= settings.max_word_duration
+                    last_is_normal = last_dur <= settings.max_word_duration
+                    if first_is_normal and words_cut[0]["start"] > leading_threshold:
                         cut_end = max(0.0, words_cut[0]["start"] - 0.2)
                         if cut_end > 0.05:
                             oversized_2nd.append({"start": 0.0, "end": cut_end})
                             logger.info(
                                 "冒頭無発話: 0.0-%.2fs を削除候補に追加", cut_end,
                             )
-                    if words_cut[-1]["end"] < cut_duration_pre - trailing_threshold:
+                    elif not first_is_normal:
+                        logger.info(
+                            "冒頭 word が oversized(%.2fs) → 施策G スキップ、施策F に委任",
+                            first_dur,
+                        )
+                    if last_is_normal and words_cut[-1]["end"] < cut_duration_pre - trailing_threshold:
                         cut_start = words_cut[-1]["end"] + 0.2
                         if cut_duration_pre - cut_start > 0.05:
                             oversized_2nd.append({"start": cut_start, "end": cut_duration_pre})
@@ -477,6 +490,11 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                                 "末尾無発話: %.2f-%.2fs を削除候補に追加",
                                 cut_start, cut_duration_pre,
                             )
+                    elif not last_is_normal:
+                        logger.info(
+                            "末尾 word が oversized(%.2fs) → 施策G スキップ、施策F に委任",
+                            last_dur,
+                        )
                     if oversized_2nd:
                         total = sum(c["end"] - c["start"] for c in oversized_2nd)
                         logger.info(
