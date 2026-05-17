@@ -1,8 +1,28 @@
-# 引き継ぎノート（2026-05-15 更新）
+# 引き継ぎノート（2026-05-17 更新）
 
-## このセッションでの主な変更
+## このセッションでの主な変更 (2026-05-17)
 
-### コミット済み
+### `fix-subtitle-word-order-collapse` 完了 — Stage 5 を 5a/5b に分割
+- **コミット**: `426806d`, `f5ff50e`
+- **問題**: ベースライン (job d8d062dc) で字幕の冒頭が「様が悩まれているダイエットお客」のように subword レベルで語順崩壊。 1段目 transcribe の word 列を `_filter_words_by_segments` で 2 段 remap する構造が原因
+- **解決**: 動画処理パイプラインの Stage 5 を 5a/5b に分割
+  - **Stage 5a**: cut.mp4 transcribe (2段目) + 施策F/G 判定 + cut2.mp4 生成
+  - **Stage 5b** (新規): cut2.mp4 を **3段目 transcribe** して字幕用 words を取り直し → words_to_segments → ASS 生成
+  - 1+2段目 ASR は動画カット判定 (施策F/G) 専用。 字幕生成は 3段目で独立
+  - 施策F が発動しない場合は 2段目 words_cut にフォールバック
+- **削除**: `_merge_word_streams` ヘルパー (用途消滅)
+- **追加**: `backend/tests/test_video_router_stage5b.py` (2 件、 107/107 PASS)
+- **measure_quality.py 実測** (job 994f47eb):
+  - #6 字幕タイミング同期 bad_count 18 → **0** で合格
+  - subword 語順崩壊が **構造的に消滅**
+  - 機械測定 3/6 → **4/6** 合格、 全体 6/14 → **7/14**
+
+### ⚠️ 新規問題: 冒頭 36 秒の字幕欠落
+- 出力動画 84.58 秒中、 字幕が **36.38 秒目** から始まる(前半 43% に字幕無し)
+- 真因仮説: 3段目 ReazonSpeech が cut2.mp4 の冒頭発話を聞き逃している
+- 次に起票予定: `fix-third-stage-asr-leading-gap`
+
+### 過去のコミット
 - `5f3633a` feat: ReazonSpeech統合・3段ASRフォールバック(ReazonSpeech→WhisperX→faster-whisper)
 - `e33c8b4` refactor: 単語境界スナップ・意訳モード・重複話検出強化・空白削減パラメータ調整
 - `e8cc654` perf: ffmpeg多重再エンコードを1パスに統合・Whisperモデルキャッシュ・AIキャプション/バズスコア機能追加

@@ -19,23 +19,23 @@
 
 ## 3. ベースライン再測定
 
-- [ ] 3.1 docker compose で backend を再起動(uvicorn --reload で自動でも可)
-- [ ] 3.2 `test-videos/seitai_food.mov` を `/api/process` で再処理(skip_preview=true, ⚡ぎっしりプリセット)
-- [ ] 3.3 完了後 `python backend/scripts/measure_quality.py <new_job_id>` を実行
-- [ ] 3.4 `quality_report.md` を確認: #5 #6 が ✅ になっていることを期待。 #7 #8 も改善傾向か確認
-- [ ] 3.5 出力字幕の冒頭 5 Dialogue を目視確認: subword 語順崩壊が消失しているか
-- [ ] 3.6 HOOK / CTA / 動画長 / 処理時間 に退行がないか確認(処理時間は +30-60 秒の範囲)
+- [x] 3.1 docker compose で backend を再起動(uvicorn --reload で自動でも可)
+- [x] 3.2 `test-videos/seitai_food.mov` を `/api/process` で再処理(skip_preview=true, ⚡ぎっしりプリセット) → job 994f47eb
+- [x] 3.3 完了後 `python backend/scripts/measure_quality.py 994f47eb-4259-499c-8140-fb720160c23a` を実行
+- [x] 3.4 `quality_report.md` 確認: #6 ✅ (0件), #5 語順崩壊解消、 機械測定 4/6 合格
+- [x] 3.5 出力字幕の冒頭 Dialogue を目視確認: subword 語順崩壊が消失している(ただし冒頭 36秒 字幕欠落の新規問題)
+- [x] 3.6 HOOK / CTA / 動画長 / 処理時間 確認: 動画長 84.6s ✅、 処理時間 248s ✅ (+7s)、 CTA ✅
 
 ## 4. baseline.md 更新
 
-- [ ] 4.1 `openspec/changes/establish-quality-line/baseline.md` の seitai_food.mov 列を更新
-- [ ] 4.2 概要セクション(機械測定 X/6、 全体 X/14)を更新
-- [ ] 4.3 「不合格項目 → 次に起票すべき change 候補」の `fix-subtitle-word-order-collapse` を「✅ 解決済」とマーク
-- [ ] 4.4 まだ残る不合格項目(#7 #8 など)を `fix-subtitle-segmentation-quality` 候補として明示
+- [x] 4.1 `openspec/changes/establish-quality-line/baseline.md` の seitai_food.mov 列を更新(旧 d8d062dc + 新 994f47eb の 2 列)
+- [x] 4.2 概要セクション(機械測定 4/6、 全体 7/14)を更新
+- [x] 4.3 「不合格項目 → 次に起票すべき change 候補」の `fix-subtitle-word-order-collapse` を「✅ 解決済」とマーク
+- [x] 4.4 残る不合格項目を `fix-third-stage-asr-leading-gap` と `fix-subtitle-segmentation-quality` の候補として明示
 
 ## 5. ドキュメント
 
-- [ ] 5.1 `.planning/HANDOVER.md` を更新: 「Stage 5 が 5a/5b に分割された」「字幕生成は 3 段目 transcribe に統一」を反映
+- [x] 5.1 `.planning/HANDOVER.md` を更新: 「Stage 5 が 5a/5b に分割された」「字幕生成は 3 段目 transcribe に統一」を反映
 - [x] 5.2 video.py のクラスドキュストリングまたはモジュールコメントに新フロー(5a/5b)を記載
 
 ## 6. archive 準備
