@@ -17,10 +17,29 @@
   - subword 語順崩壊が **構造的に消滅**
   - 機械測定 3/6 → **4/6** 合格、 全体 6/14 → **7/14**
 
-### ⚠️ 新規問題: 冒頭 36 秒の字幕欠落
-- 出力動画 84.58 秒中、 字幕が **36.38 秒目** から始まる(前半 43% に字幕無し)
-- 真因仮説: 3段目 ReazonSpeech が cut2.mp4 の冒頭発話を聞き逃している
-- 次に起票予定: `fix-third-stage-asr-leading-gap`
+### `fix-asr-aware-silence-protection` 完了 — silero VAD と ASR の判断不一致を ASR 優先で解決
+- **問題**: 3段目 ASR の冒頭認識ミスの真因が判明。 silero VAD が 1段目 ASR の発話開始 (元時刻 20.38 秒「客」) を含む 0-20.75 秒を無音と判定 → voice_segments で物理削除されていた
+- **解決**: `protect_words_from_silences(silences, words, margin=0.1)` を `silence.py` に追加。 silero VAD と ASR の判断が食い違う場合は ASR を優先 (silence を word の範囲だけ穴あけ)
+- video.py の Stage 3 末尾、 snap_silences の直前で呼出
+- テスト 5 件追加 → 112/112 PASS
+- 実測 (job b127c11d): cut2.mp4 84.6 → **102.4 秒** (+17.8 秒の発話が物理保護)
+- ただし 3段目 ReazonSpeech が cut2 冒頭をまだ認識ミス → 字幕反映は次の change で
+
+### `fix-third-stage-asr-leading-miss` 完了 — 1段目 ASR で hybrid 補完
+- **問題**: ASR-aware で発話を物理保護しても、 3段目 ReazonSpeech (cut2.mp4 transcribe) が冒頭 30 秒を一切認識できない (cut_and_concat の音響処理 or ReazonSpeech の short context 認識精度低下)
+- **解決**: `_hybrid_prepend_leading_words` ヘルパーを追加。 3段目 first_word.start が動画長 × 0.05 (最低 2 秒) を超える場合、 1段目 words を voice_segments → cut2_voices で remap して `first_word.start - 0.1` より前の word を字幕用に prepend
+- 前回 `fix-subtitle-word-order-collapse` で「2 段 remap は崩壊」と判断したが、 補完範囲を冒頭の数秒に限定して順序崩壊リスクを最小化
+- テスト 3 件追加 → 115/115 PASS
+- 実測 (job f4703bef): 字幕冒頭 0.14 秒目から「客 食事の話をしようと思います」、 14 秒目「結論から言うと一番大事なのはメンタルです」 (動画の核心) が出現 ✅
+- 全体合格率 7/14 → **9/14 (推定)**
+
+### 残課題
+- **#7 助詞直後切れ 38.7%** (目標 10%): 補完で短い word が増えた副作用、 別 change `fix-subtitle-segmentation-quality` で対応
+- **#8 字幕 8-14 文字 41.9%** (目標 70%): 同上
+- これらは美観の問題で、 業務量産には致命的ではない
+
+### 次に起票予定
+- `fix-subtitle-segmentation-quality`: #7 #8 の根治
 
 ### 過去のコミット
 - `5f3633a` feat: ReazonSpeech統合・3段ASRフォールバック(ReazonSpeech→WhisperX→faster-whisper)
