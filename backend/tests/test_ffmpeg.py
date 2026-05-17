@@ -4,6 +4,7 @@ from app.services.ffmpeg import (
     extract_audio,
     _build_cut_concat_filter,
     _fit_overlay_text,
+    _chunk_segments,
 )
 
 
@@ -123,3 +124,40 @@ def test_fit_overlay_text_min_size_respected():
     text = "あ" * 100
     _, size = _fit_overlay_text(text, base_size=80, min_size=40)
     assert size >= 40
+
+
+# === _chunk_segments (fix-cut-concat-large-filter-hang) ===
+
+def test_chunk_segments_splits_into_chunks_of_size():
+    """25 個の segments を 10 ずつに分割 → [10, 10, 5]。"""
+    segs = [{"start": float(i), "end": float(i + 0.5)} for i in range(25)]
+    chunks = _chunk_segments(segs, chunk_size=10)
+    assert len(chunks) == 3
+    assert len(chunks[0]) == 10
+    assert len(chunks[1]) == 10
+    assert len(chunks[2]) == 5
+    # 順序が保たれる
+    assert chunks[0][0]["start"] == 0.0
+    assert chunks[2][-1]["start"] == 24.0
+
+
+def test_chunk_segments_single_chunk_when_below_threshold():
+    """5 個 (chunk_size=10 以下) は 1 chunk。"""
+    segs = [{"start": float(i), "end": float(i + 0.5)} for i in range(5)]
+    chunks = _chunk_segments(segs, chunk_size=10)
+    assert len(chunks) == 1
+    assert len(chunks[0]) == 5
+
+
+def test_chunk_segments_exact_multiple():
+    """20 個 ÷ 10 = 2 chunks ぴったり。"""
+    segs = [{"start": float(i), "end": float(i + 0.5)} for i in range(20)]
+    chunks = _chunk_segments(segs, chunk_size=10)
+    assert len(chunks) == 2
+    assert all(len(c) == 10 for c in chunks)
+
+
+def test_chunk_segments_invalid_chunk_size():
+    """chunk_size <= 0 は ValueError。"""
+    with pytest.raises(ValueError):
+        _chunk_segments([{"start": 0.0, "end": 1.0}], chunk_size=0)

@@ -127,24 +127,28 @@ def _build_cut_concat_filter(
     return ";".join(parts)
 
 
-def cut_and_concat(
+def _chunk_segments(segments: list[dict], chunk_size: int = 10) -> list[list[dict]]:
+    """segments を chunk_size 個ずつのリストに分割する。
+
+    大量 segments を 1 つの filter_complex に詰めると ffmpeg のメモリ消費が爆発し、
+    docker VM レベルで resource starvation → hang する。 chunk 分割で負荷を分散。
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be > 0")
+    return [segments[i:i + chunk_size] for i in range(0, len(segments), chunk_size)]
+
+
+def _run_cut_concat_single_pass(
     video_path: str,
     segments: list[dict],
     output_path: str,
-    audio_fade: float = 0.08,
-    target_width: int = 1080,
-    target_height: int = 1920,
-    fps: int = 30,
-) -> str:
-    """有音セグメントをカットして結合（リール解像度 1080x1920 にダウンスケール）。
-
-    filter_complex の trim + atrim + concat を 1 パスの ffmpeg で実行する。
-    4K 入力をそのまま処理するとメモリ消費が爆発し OOM でクラッシュするため、
-    最終出力サイズに揃えてからエンコードする（リール用 1080x1920 既定）。
-    """
-    if not segments:
-        raise ValueError("No segments to concatenate")
-
+    audio_fade: float,
+    target_width: int,
+    target_height: int,
+    fps: int,
+    timeout: int = 600,
+) -> None:
+    """単一の filter_complex で trim+concat を 1 パス実行 (内部実装)。"""
     filter_complex = _build_cut_concat_filter(
         segments, audio_fade, target_width, target_height, fps,
     )
@@ -157,11 +161,88 @@ def cut_and_concat(
         "-c:a", "aac",
         output_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            f"ffmpeg cut_and_concat timed out after {timeout}s "
+            f"(segments={len(segments)})"
+        ) from e
     if result.returncode != 0:
-        # stderr が巨大なので末尾だけ抜粋して例外メッセージに（先頭は ffmpeg バナーで情報が薄い）
         tail = "\n".join((result.stderr or "").splitlines()[-30:])
         raise RuntimeError(f"ffmpeg cut_and_concat failed:\n{tail}")
+
+
+def cut_and_concat(
+    video_path: str,
+    segments: list[dict],
+    output_path: str,
+    audio_fade: float = 0.08,
+    target_width: int = 1080,
+    target_height: int = 1920,
+    fps: int = 30,
+    chunk_size: int = 10,
+    timeout: int = 600,
+) -> str:
+    """有音セグメントをカットして結合 (リール解像度 1080x1920 にダウンスケール)。
+
+    segments が chunk_size を超える場合は chunk 分割して個別 ffmpeg で処理し、
+    concat demuxer で結合する。 これにより 50+ trim を 1 つの filter_complex に
+    詰め込むことで発生していた ffmpeg メモリ爆発による hang を回避する。
+
+    Args:
+        chunk_size: 1 chunk あたりの最大 segments 数 (デフォルト 10)
+        timeout: ffmpeg subprocess の timeout 秒数 (デフォルト 600)
+    """
+    if not segments:
+        raise ValueError("No segments to concatenate")
+
+    chunks = _chunk_segments(segments, chunk_size)
+
+    if len(chunks) == 1:
+        # 小規模: 従来通り 1 パス
+        _run_cut_concat_single_pass(
+            video_path, segments, output_path,
+            audio_fade, target_width, target_height, fps, timeout,
+        )
+        return output_path
+
+    # 大量 segments: chunk 分割 → 各 chunk を中間 mp4 → concat demuxer で結合
+    import tempfile
+    import os as _os
+    with tempfile.TemporaryDirectory(prefix="cut_chunks_") as tmpdir:
+        chunk_outputs: list[str] = []
+        for i, chunk in enumerate(chunks):
+            chunk_out = _os.path.join(tmpdir, f"chunk_{i:03d}.mp4")
+            _run_cut_concat_single_pass(
+                video_path, chunk, chunk_out,
+                audio_fade, target_width, target_height, fps, timeout,
+            )
+            chunk_outputs.append(chunk_out)
+        # concat demuxer 用のリストを作成
+        list_path = _os.path.join(tmpdir, "list.txt")
+        with open(list_path, "w") as f:
+            for p in chunk_outputs:
+                f.write(f"file '{p}'\n")
+        # 再エンコードなし (-c copy) で 軽量結合
+        concat_cmd = [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", list_path, "-c", "copy", output_path,
+        ]
+        try:
+            result = subprocess.run(
+                concat_cmd, capture_output=True, text=True, timeout=120,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(
+                f"ffmpeg concat demuxer timed out after 120s "
+                f"(chunks={len(chunks)})"
+            ) from e
+        if result.returncode != 0:
+            tail = "\n".join((result.stderr or "").splitlines()[-30:])
+            raise RuntimeError(f"ffmpeg concat demuxer failed:\n{tail}")
     return output_path
 
 
