@@ -55,6 +55,10 @@ def _enter_common_mocks(st):
     st.enter_context(patch.object(video_module, "generate_hook", return_value=""))
     st.enter_context(patch.object(video_module, "select_bgm_style", return_value=""))
     st.enter_context(patch.object(video_module, "detect_topics", return_value=[]))
+    st.enter_context(patch.object(
+        video_module, "cross_check_disagreements",
+        side_effect=lambda d, w, video_context="": d,
+    ))
 
 
 def test_stage5b_does_not_call_third_transcribe(tmp_path, monkeypatch):
@@ -67,6 +71,12 @@ def test_stage5b_does_not_call_third_transcribe(tmp_path, monkeypatch):
 
     with ExitStack() as st:
         _enter_common_mocks(st)
+        # 1 段目は ensemble に切替 (ReazonSpeech + WhisperX 並列)
+        m_ens = st.enter_context(patch.object(
+            video_module, "transcribe_ensemble",
+            return_value=(word_for_jump, [], {"disagreements": []}),
+        ))
+        # 2 段目は cut.mp4 を transcribe_with_words
         m_trans = st.enter_context(patch.object(video_module, "transcribe_with_words"))
         m_oversized = st.enter_context(patch.object(video_module, "detect_oversized_words"))
         st.enter_context(patch.object(
@@ -81,7 +91,6 @@ def test_stage5b_does_not_call_third_transcribe(tmp_path, monkeypatch):
             ],
         ))
         m_trans.side_effect = [
-            (word_for_jump, []),  # 1 段目 (Stage 3)
             (word_for_jump, []),  # 2 段目 (Stage 5a, cut.mp4)
             # 3 段目は呼ばれない
         ]
@@ -97,7 +106,8 @@ def test_stage5b_does_not_call_third_transcribe(tmp_path, monkeypatch):
         )
         video_module._run_processing(job_id, settings)
 
-    # transcribe は 2 回まで (1 段目 + 2 段目)。 3 段目はスキップ
-    assert m_trans.call_count == 2
+    # ensemble は 1 段目で 1 回、 transcribe_with_words は 2 段目で 1 回
+    assert m_ens.call_count == 1
+    assert m_trans.call_count == 1
     audios = [c[0][0] for c in m_trans.call_args_list]
     assert all(not a.endswith("cut2_audio.wav") for a in audios)

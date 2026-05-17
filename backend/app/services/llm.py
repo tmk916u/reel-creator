@@ -682,6 +682,117 @@ def detect_topics(segments: list[str], max_topics: int = 4, video_context: str =
     return result
 
 
+# === Ensemble disagreement cross-check ===
+
+_CROSS_CHECK_SYSTEM_PROMPT = """あなたは日本語動画の ASR 結果の校正アシスタントです。
+2 つの ASR(ReazonSpeech と WhisperX)で異なる認識結果が出た不一致箇所について、
+前後の context から **最も自然で正しい text** を選んでください。
+
+入力形式:
+[N] context_before / rs_text / wx_text / context_after
+例:
+[0] 結論から言うと一番大事なのは / 悪い要 / 重要 / だと思います
+→ 前後の文脈「一番大事なのは...だと思います」 から「重要」 が正しい
+
+ルール:
+- 候補 rs_text と wx_text 以外の text も提案可 (例: 両方とも誤認識なら正しい単語を生成)
+- 文脈と整合しない選択肢は捨てる
+- 短い置換 (1-10 文字) を優先
+
+出力は必ず以下の JSON 形式で返す:
+{"corrections": [{"index": 0, "text": "正しい text"}, ...]}
+変更が必要なものだけ返す。不一致でも文脈から判断できない場合は省略可。"""
+
+
+class _CrossCheckResponse(BaseModel):
+    corrections: list[_CorrectionItem] = Field(default_factory=list)
+
+
+def cross_check_disagreements(
+    disagreements: list[dict],
+    all_words: list[dict],
+    video_context: str = "",
+    context_window: int = 5,
+) -> list[dict]:
+    """ensemble の不一致箇所を LLM で文脈推測修正する。
+
+    Args:
+        disagreements: source="disagreement" の word リスト (rs_text と wx_text を含む)
+        all_words: 全 ensemble words (context 抽出用)
+        video_context: 動画の文脈サマリー
+        context_window: 前後何 word を context として LLM に渡すか
+
+    Returns:
+        修正後の text を含む word のリスト (disagreements と同じ長さ、 修正されていれば text 更新)
+    """
+    if not disagreements:
+        return disagreements
+
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    if provider not in ("openai", "anthropic"):
+        return disagreements
+    if provider == "openai" and not os.getenv("OPENAI_API_KEY"):
+        return disagreements
+    if provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
+        return disagreements
+
+    # context は all_words 上での index で計算
+    word_to_idx = {id(w): i for i, w in enumerate(all_words)}
+
+    lines: list[str] = []
+    for n, dw in enumerate(disagreements):
+        idx = word_to_idx.get(id(dw), -1)
+        if idx < 0:
+            # 同じ dict id が見つからないなら start でマッチング
+            for i, w in enumerate(all_words):
+                if abs(w["start"] - dw["start"]) < 0.01:
+                    idx = i
+                    break
+        if idx < 0:
+            lines.append(f"[{n}]  / {dw.get('rs_text', '?')} / {dw.get('wx_text', '?')} / ")
+            continue
+        before = "".join(
+            w["text"] for w in all_words[max(0, idx - context_window):idx]
+        )
+        after = "".join(
+            w["text"] for w in all_words[idx + 1:idx + 1 + context_window]
+        )
+        rs = dw.get("rs_text", "?")
+        wx = dw.get("wx_text", "?")
+        lines.append(f"[{n}] {before} / {rs} / {wx} / {after}")
+
+    user_message = "\n".join(lines)
+    prompt = _with_context(_CROSS_CHECK_SYSTEM_PROMPT, video_context)
+
+    try:
+        if provider == "openai":
+            raw = _call_openai(user_message, system_prompt=prompt)
+        else:
+            raw = _call_anthropic(user_message, system_prompt=prompt)
+        payload = _extract_json(raw)
+        parsed = _CrossCheckResponse.model_validate(payload)
+    except (ValidationError, json.JSONDecodeError, Exception) as e:
+        logger.warning("LLM cross-check failed: %s", e)
+        return disagreements
+
+    result = [dict(w) for w in disagreements]
+    applied = 0
+    for item in parsed.corrections:
+        if not (0 <= item.index < len(result)):
+            continue
+        new_text = item.text.strip()
+        if not new_text:
+            continue
+        result[item.index]["text"] = new_text
+        result[item.index]["source"] = "cross_check"
+        applied += 1
+    logger.info(
+        "LLM cross-check: %d/%d disagreements resolved",
+        applied, len(disagreements),
+    )
+    return result
+
+
 _BGM_STYLE_SYSTEM_PROMPT = """あなたは動画の雰囲気から最適な BGM スタイルを選定するアシスタントです。
 入力された日本語の文字起こしを読み、3種類の中から最適なBGMを1つ選んでください。
 
