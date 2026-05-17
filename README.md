@@ -216,6 +216,19 @@ npm install
 npm run dev
 ```
 
+## 業務量産品質ライン
+
+業務量産投入の合格基準は **14 項目チェックリスト** として永続化:
+
+- 仕様: [`openspec/specs/quality-line/spec.md`](openspec/specs/quality-line/spec.md)
+- カテゴリ: カット品質 / 字幕品質 / テロップ品質 / 業務量産観点
+- テスト動画: `test-videos/` 配下 (`seitai_standard.mov`, `seitai_food.mov`, `seitai_long.mov`)
+- 各動画の期待値: `test-videos/*.expected.md`
+- 測定スクリプト: `backend/scripts/measure_quality.py <job_id>`
+- ベースライン記録: `openspec/changes/establish-quality-line/baseline.md`
+
+不合格項目があったら **1 項目 = 1 change** で潰す運用。詳細は [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+
 ## ライセンス
 
 Private

@@ -38,3 +38,8 @@ backend/app/data/bgm/*.m4a
 backend/app/data/sfx/*.mp3
 backend/app/data/sfx/*.wav
 backend/app/data/sfx/*.m4a
+
+# Test videos (user-provided, large files)
+test-videos/*.mov
+test-videos/*.mp4
+test-videos/*.webm

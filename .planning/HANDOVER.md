@@ -147,6 +147,29 @@ frontend/
 
 `ReazonSpeech: 26 segments, 372 subwords, 223.8s` → `VAD` → `LLM` まで来た後の長い沈黙は **ffmpeg の cut_and_concat / apply_pipeline_combined 実行中**。3 分動画では ffmpeg が CPU で 5-10 分かかる可能性。`ReazonSpeech 自体は ~3.7 分（初回モデル DL 込み）で完了済み`。
 
+## 業務量産品質ライン (NEW)
+
+直近の反応的バグ修正ループから脱却するため、 業務量産投入の合格基準を
+OpenSpec で永続化:
+
+- **Spec**: `openspec/specs/quality-line/spec.md` (14 項目)
+- **Change**: `openspec/changes/establish-quality-line/` (ベースライン測定用)
+- **テスト動画**: `test-videos/` (3 本、 ユーザーが手元の動画から配置)
+- **測定スクリプト**: `backend/scripts/measure_quality.py <job_id>`
+- **運用ルール**: `CONTRIBUTING.md` 参照
+- **ベースライン記録**: `openspec/changes/establish-quality-line/baseline.md`
+
+### 次の運用フロー
+
+1. ユーザーが `test-videos/seitai_*.mov` を配置
+2. 各動画を ⚡ぎっしりプリセット (skip_preview=true) で処理
+3. `python backend/scripts/measure_quality.py <job_id>` を実行
+4. `baseline.md` に集約
+5. 不合格項目それぞれを **1 項目 = 1 change** で起票
+6. archive `establish-quality-line` → 次の改善 change へ
+
+これにより「直したつもりが別が壊れる」を **退行検知** できるサイクルに移行。
+
 ## 次セッション開始時の最初のプロンプト案
 
 ```

@@ -60,7 +60,7 @@
 ## 9. 検証
 
 - [x] 9.1 `make test` 相当（`PYTHONPATH=. pytest tests/ -v`）でバックエンドのテストが全部通ることを確認（32 passed）
-- [ ] 9.2 `docker compose up --build` を実行し、サンプル動画（フィラー多めの撮って出し）を `enable_jump_cut: true` で処理して結果を目視確認
+- [x] 9.2 `docker compose up --build` を実行し、サンプル動画（フィラー多めの撮って出し）を `enable_jump_cut: true` で処理して結果を目視確認
 - [x] 9.3 LLM_PROVIDER 未設定状態でも処理が完走することを確認（degraded mode）（test_detect_restatements_unset_provider 等で検証済み）
 - [x] 9.4 `frontend` で `npm run build` がエラーなく通ることを確認（Next.js 16.1.6, 1.2秒）
 
