@@ -74,6 +74,7 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
 };
 
 export default function ProcessingPanel({ duration, previewUrl, onStart }: Props) {
+  // デフォルトで「⚡ぎっしり」 プリセットを適用 (プリセット未選択で処理されるバグ回避)
   const [settings, setSettings] = useState<ProcessSettings>({
     silence_threshold: -30,
     min_silence_duration: 0.3,
@@ -93,8 +94,10 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
     font_size: "medium",
     subtitle_position: "bottom",
     subtitle_color: "white",
+    // ⚡ぎっしりプリセットの設定をマージ (初期適用)
+    ...PRESETS.tight,
   });
-  const [preset, setPreset] = useState<Preset>("custom");
+  const [preset, setPreset] = useState<Preset>("tight");
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const applyPreset = (p: Exclude<Preset, "custom">) => {
