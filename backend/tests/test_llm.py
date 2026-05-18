@@ -139,3 +139,152 @@ def test_detect_topics_no_retry_when_already_has_results(monkeypatch):
     result = llm.detect_topics(["セグ1", "セグ2"])
     assert call_count["n"] == 1  # リトライなし
     assert len(result) == 1
+
+
+# === チャンク分割（chunked-restatement-detection） ===
+
+def _long_words(total_sec: float, word_sec: float = 1.0) -> list[dict]:
+    n = int(total_sec / word_sec)
+    return [
+        {"start": i * word_sec, "end": (i + 1) * word_sec, "text": f"w{i}"}
+        for i in range(n)
+    ]
+
+
+def test_split_words_into_chunks_short_returns_single():
+    """総尺 60 秒未満は単一チャンク（後方互換）。"""
+    words = _long_words(50.0)
+    chunks = llm._split_words_into_chunks(words)
+    assert len(chunks) == 1
+    assert chunks[0] == words
+
+
+def test_split_words_into_chunks_long_multiple():
+    """総尺 60 秒以上はチャンク分割される。"""
+    words = _long_words(250.0)
+    chunks = llm._split_words_into_chunks(words)
+    # 90s chunk, 15s overlap, step=75s → cursors: 0, 75, 150, 225 で 4 チャンク
+    assert len(chunks) == 4
+
+
+def test_split_words_into_chunks_overlap_words_in_both():
+    """オーバーラップ範囲の word は隣接 2 チャンク両方に含まれる。"""
+    words = _long_words(250.0)
+    chunks = llm._split_words_into_chunks(words)
+    # 隣接チャンク間のオーバーラップ範囲（cursor 0 chunk は [0,90), cursor 75 chunk は [75,165)）
+    chunk0_starts = {w["start"] for w in chunks[0]}
+    chunk1_starts = {w["start"] for w in chunks[1]}
+    overlap = chunk0_starts & chunk1_starts
+    # 15 秒オーバーラップ、 1 秒/word → 15 word が両方に含まれる
+    assert len(overlap) == 15
+
+
+def test_split_words_into_chunks_no_mid_word_cut():
+    """チャンク境界は word の start にスナップ（word の途中で切らない）。"""
+    # word 境界が不揃いな word 列で確認
+    words = []
+    t = 0.0
+    while t < 100.0:
+        # 各 word は 0.7-1.3 秒のランダムめな長さ
+        dur = 0.7 if int(t * 10) % 2 == 0 else 1.3
+        words.append({"start": t, "end": t + dur, "text": f"w_{t:.1f}"})
+        t += dur
+
+    chunks = llm._split_words_into_chunks(words)
+    # 各 word は 1 つ以上のチャンクに含まれる
+    # （重要なのは word 自体が分割されないこと）
+    all_word_ids = {id(w) for w in words}
+    seen_ids: set = set()
+    for c in chunks:
+        for w in c:
+            seen_ids.add(id(w))
+    assert seen_ids == all_word_ids
+
+
+def test_detect_restatements_short_calls_llm_once(monkeypatch):
+    """60 秒未満は LLM を 1 回だけ呼ぶ（後方互換）。"""
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy")
+    call_count = {"n": 0}
+
+    def fake_call(text):
+        call_count["n"] += 1
+        return '{"ranges": []}'
+
+    monkeypatch.setattr(llm, "_call_openai", fake_call)
+    llm.detect_restatements(_long_words(50.0))
+    assert call_count["n"] == 1
+
+
+def test_detect_restatements_long_calls_llm_per_chunk(monkeypatch):
+    """60 秒以上はチャンク数だけ LLM が呼ばれる。"""
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy")
+    call_count = {"n": 0}
+
+    def fake_call(text):
+        call_count["n"] += 1
+        return '{"ranges": []}'
+
+    monkeypatch.setattr(llm, "_call_openai", fake_call)
+    llm.detect_restatements(_long_words(250.0))
+    assert call_count["n"] == 4  # 250s 入力で 4 チャンク
+
+
+def test_detect_restatements_partial_chunk_failure(monkeypatch):
+    """1 チャンクが例外でも、他チャンクの結果は返る。"""
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy")
+    call_count = {"n": 0}
+
+    # チャンク境界: cursor=0,75,150,225 / 各 chunk_min はその cursor
+    # 各チャンク内で確実に範囲内となる時刻を返す
+    in_range_per_chunk = [
+        (10.0, 12.0),    # chunk0 [0, 90)
+        (80.0, 82.0),    # chunk1 例外（使われない）
+        (160.0, 162.0),  # chunk2 [150, 240)
+        (230.0, 232.0),  # chunk3 [225, 250)
+    ]
+
+    def fake_call(text):
+        idx = call_count["n"]
+        call_count["n"] += 1
+        if idx == 1:
+            raise RuntimeError("chunk 2 fails")
+        s, e = in_range_per_chunk[idx]
+        return f'{{"ranges": [{{"start": {s}, "end": {e}}}]}}'
+
+    monkeypatch.setattr(llm, "_call_openai", fake_call)
+    result = llm.detect_restatements(_long_words(250.0))
+    # 4 チャンク中 1 つ失敗 → 3 区間
+    assert len(result) == 3
+
+
+def test_detect_restatements_all_chunks_fail_returns_empty(monkeypatch):
+    """全チャンクが例外なら空リストを返す（既存挙動と一致）。"""
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy")
+    monkeypatch.setattr(llm, "_call_openai", lambda text: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert llm.detect_restatements(_long_words(250.0)) == []
+
+
+def test_detect_restatements_overlap_merged_by_caller(monkeypatch):
+    """オーバーラップ範囲で重複検出されても呼出側の merge_ranges で 1 区間に統合される。"""
+    from app.services.jump_cut import merge_ranges
+
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy")
+
+    def fake_call(text):
+        # 各チャンクは「自分の範囲内にある言い直し 80-85 秒」を検出するが、
+        # chunk0 は [0,90)、chunk1 は [75,165) なので 80-85 は両方に入る
+        # ただし chunk1 の chunk_min は 75 なので 80-85 は有効
+        return '{"ranges": [{"start": 80, "end": 85}]}'
+
+    monkeypatch.setattr(llm, "_call_openai", fake_call)
+    result = llm.detect_restatements(_long_words(250.0))
+    # 4 チャンク呼ばれるが、80-85 が含まれるのは chunk0 と chunk1（オーバーラップ範囲）の 2 つ
+    # chunk2, chunk3 は 80-85 が範囲外で drop される
+    assert len(result) == 2
+    merged = merge_ranges(result)
+    assert merged == [{"start": 80.0, "end": 85.0}]

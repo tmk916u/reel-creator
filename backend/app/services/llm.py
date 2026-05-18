@@ -147,11 +147,44 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(text)
 
 
+_RESTATEMENT_CHUNK_THRESHOLD_SEC = 60.0
+_RESTATEMENT_CHUNK_SEC = 90.0
+_RESTATEMENT_CHUNK_OVERLAP_SEC = 15.0
+
+
+def _split_words_into_chunks(
+    words: list[dict],
+    chunk_sec: float = _RESTATEMENT_CHUNK_SEC,
+    overlap_sec: float = _RESTATEMENT_CHUNK_OVERLAP_SEC,
+) -> list[list[dict]]:
+    if not words:
+        return []
+    min_t = min(w["start"] for w in words)
+    max_t = max(w["end"] for w in words)
+    if max_t - min_t < _RESTATEMENT_CHUNK_THRESHOLD_SEC:
+        return [words]
+
+    step = chunk_sec - overlap_sec
+    chunks: list[list[dict]] = []
+    cursor = min_t
+    while cursor < max_t:
+        chunk_end = cursor + chunk_sec
+        chunk = [w for w in words if cursor <= w["start"] < chunk_end]
+        if chunk:
+            chunks.append(chunk)
+        if chunk_end >= max_t:
+            break
+        cursor += step
+    return chunks
+
+
 def detect_restatements(words: list[dict]) -> list[dict]:
     """LLM を使って言い直し・噛みの削除区間を抽出する。
 
     LLM_PROVIDER 環境変数で openai / anthropic を切替。
     未設定・API キー欠落・呼び出し失敗時は空リストを返す（degraded mode）。
+    総尺 60 秒以上の入力は 90 秒チャンク・15 秒オーバーラップで分割呼出し、
+    結果は重複を含む flat list で返す（呼出側の merge_ranges で統合される前提）。
     """
     if not words:
         return []
@@ -165,31 +198,35 @@ def detect_restatements(words: list[dict]) -> list[dict]:
     if provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
         return []
 
-    transcript_text = _format_transcript(words)
-    min_t = min(w["start"] for w in words)
-    max_t = max(w["end"] for w in words)
+    chunks = _split_words_into_chunks(words)
+    n = len(chunks)
+    result: list[dict] = []
 
-    try:
-        if provider == "openai":
-            raw = _call_openai(transcript_text)
-        else:
-            raw = _call_anthropic(transcript_text)
-        payload = _extract_json(raw)
-        parsed = _RangesResponse.model_validate(payload)
-    except (ValidationError, json.JSONDecodeError, Exception) as e:
-        logger.warning("LLM restatement detection failed: %s", e)
-        return []
-
-    valid: list[dict] = []
-    for r in parsed.ranges:
-        if r.end <= r.start:
+    for i, chunk in enumerate(chunks):
+        chunk_min = min(w["start"] for w in chunk)
+        chunk_max = max(w["end"] for w in chunk)
+        transcript_text = _format_transcript(chunk)
+        try:
+            if provider == "openai":
+                raw = _call_openai(transcript_text)
+            else:
+                raw = _call_anthropic(transcript_text)
+            payload = _extract_json(raw)
+            parsed = _RangesResponse.model_validate(payload)
+        except (ValidationError, json.JSONDecodeError, Exception) as e:
+            logger.warning("restatement chunk %d/%d failed: %s", i + 1, n, e)
             continue
-        if r.start < min_t or r.end > max_t:
-            logger.warning("LLM returned out-of-range: %s-%s", r.start, r.end)
-            continue
-        valid.append({"start": r.start, "end": r.end})
 
-    return valid
+        for r in parsed.ranges:
+            if r.end <= r.start:
+                continue
+            if r.start < chunk_min or r.end > chunk_max:
+                logger.warning("LLM returned out-of-range: %s-%s", r.start, r.end)
+                continue
+            result.append({"start": r.start, "end": r.end})
+
+    logger.info("restatement chunked: chunks=%d total_ranges=%d", n, len(result))
+    return result
 
 
 class _CorrectionItem(BaseModel):
