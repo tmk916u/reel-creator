@@ -434,30 +434,37 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                             coh_deletions = []
                             rejected_overall = True
 
-                    if _coherence_dry_run():
-                        # Dry-run: extra_cuts に追加せず JSON ダンプ
-                        import json as _json
-                        dryrun_path = job_dir / "coherence_dryrun.json"
-                        dryrun_path.write_text(
-                            _json.dumps({
-                                "deletions": coh_result["deletions"],
-                                "summary": coh_result["summary"],
-                                "chunks_total": coh_result["chunks_total"],
-                                "chunks_failed": coh_result["chunks_failed"],
-                                "guard_actions": coh_result["guard_actions"],
-                                "applied": False,
-                                "rejected_by_overall_guard": rejected_overall,
-                            }, ensure_ascii=False, indent=2),
-                            encoding="utf-8",
-                        )
+                    # 本適用・dry-run どちらでも JSON にダンプする（分析スクリプト用）
+                    # ファイル名で区別: coherence_dryrun.json / coherence_applied.json
+                    is_dryrun = _coherence_dry_run()
+                    applied_now = (not is_dryrun) and bool(coh_deletions)
+                    coherence_path = job_dir / (
+                        "coherence_dryrun.json" if is_dryrun else "coherence_applied.json"
+                    )
+                    import json as _json
+                    coherence_path.write_text(
+                        _json.dumps({
+                            "deletions": coh_result["deletions"],
+                            "applied_deletions": coh_deletions if applied_now else [],
+                            "summary": coh_result["summary"],
+                            "chunks_total": coh_result["chunks_total"],
+                            "chunks_failed": coh_result["chunks_failed"],
+                            "guard_actions": coh_result["guard_actions"],
+                            "applied": applied_now,
+                            "rejected_by_overall_guard": rejected_overall,
+                            "input_words": len(surviving),
+                        }, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    if is_dryrun:
                         jump_cut_notes.append(
-                            f"コヒーレンスパス (dry-run): 候補 {len(coh_result['deletions'])} 件 → {dryrun_path.name}"
+                            f"コヒーレンスパス (dry-run): 候補 {len(coh_result['deletions'])} 件 → {coherence_path.name}"
                         )
                     elif coh_deletions:
                         extra_cuts = merge_ranges(extra_cuts + coh_deletions)
                         total_secs = sum(d["end"] - d["start"] for d in coh_deletions)
                         jump_cut_notes.append(
-                            f"コヒーレンスパス: {len(coh_deletions)} 区間 {total_secs:.1f}秒 を追加削除"
+                            f"コヒーレンスパス: {len(coh_deletions)} 区間 {total_secs:.1f}秒 を追加削除 → {coherence_path.name}"
                         )
 
         # ASR-aware silence 保護: 1段目 ASR が word を認識した範囲は silero VAD が
