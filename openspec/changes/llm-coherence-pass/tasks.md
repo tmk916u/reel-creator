@@ -1,57 +1,57 @@
 ## 1. インフラ・フラグ
 
-- [ ] 1.1 環境変数 `ENABLE_LLM_COHERENCE_PASS`（default `0`）と `LLM_COHERENCE_PASS_DRY_RUN`（default `0`）を `backend/.env.example` に追記
-- [ ] 1.2 `backend/app/services/llm.py` に環境変数を読む helper を追加（既存の `LLM_PROVIDER` と同じ場所）
+- [x] 1.1 環境変数 `ENABLE_LLM_COHERENCE_PASS`（default `0`）と `LLM_COHERENCE_PASS_DRY_RUN`（default `0`）を `backend/.env.example` に追記
+- [x] 1.2 `backend/app/services/llm.py` に環境変数を読む helper を追加（`_coherence_enabled` / `_coherence_dry_run`）
 
 ## 2. プロンプト・スキーマ実装
 
-- [ ] 2.1 `backend/app/services/llm.py` に Pydantic モデル `CoherenceDeletion` (`start: float, end: float, reason: str, confidence: float`) と `CoherenceResponse` (`deletions: list[CoherenceDeletion], summary: str`) を追加
-- [ ] 2.2 プロンプト文字列を関数内定数として実装（`design.md` の Decision 10）。few-shot は入れない
-- [ ] 2.3 入力 word 列を JSON 化する `_format_words_for_coherence(words)` を追加（既存 `_format_transcript` と分離）
+- [x] 2.1 `backend/app/services/llm.py` に Pydantic モデル `_CoherenceDeletion` と `_CoherenceResponse` を追加
+- [x] 2.2 プロンプト文字列を `_COHERENCE_SYSTEM_PROMPT` 定数として実装。few-shot は入れず指示文のみで記述
+- [x] 2.3 入力 word 列を JSON 化する `_format_words_for_coherence(words)` を追加（既存 `_format_transcript` と分離）
 
 ## 3. detect_coherence_violations 関数実装
 
-- [ ] 3.1 `backend/app/services/llm.py` に `detect_coherence_violations(words: list[dict]) -> list[dict]` を追加。戻り値は `[{"start": float, "end": float, "reason": str, "confidence": float}, ...]`
-- [ ] 3.2 `ENABLE_LLM_COHERENCE_PASS` が OFF なら即 `[]` を返す
-- [ ] 3.3 `LLM_PROVIDER` 未設定または API キー欠如時は warning を出して `[]` を返す
-- [ ] 3.4 総尺 60 秒未満なら単一呼出。60 秒以上なら既存 `_split_words_into_chunks` で分割し各チャンクで LLM を呼ぶ
-- [ ] 3.5 各チャンクの応答を Pydantic で validate。スキーマ違反は warning + スキップ
-- [ ] 3.6 チャンク単位の暴走ガード（削除総時間 > 30%）を実装。違反チャンクは丸ごとドロップ
-- [ ] 3.7 個別の削除候補が 8 秒超ならドロップ（チャンク単位ではなく削除候補単位）
-- [ ] 3.8 チャンク間の重複は呼出側の `merge_ranges` に任せる（関数内で merge しない）
-- [ ] 3.9 `logger.info("coherence pass: chunks=%d input_words=%d deletions=%d dropped_seconds=%.2f dry_run=%s", ...)` を出力
+- [x] 3.1 `backend/app/services/llm.py` に `detect_coherence_violations(words: list[dict]) -> dict` を追加（戻り値は dict、deletions/summary/chunks_total/chunks_failed/guard_actions を含む）
+- [x] 3.2 `ENABLE_LLM_COHERENCE_PASS` が OFF なら即 empty result を返す
+- [x] 3.3 `LLM_PROVIDER` 未設定または API キー欠如時は warning を出して empty を返す
+- [x] 3.4 総尺 60 秒未満なら単一呼出。60 秒以上なら既存 `_split_words_into_chunks` で分割し各チャンクで LLM を呼ぶ
+- [x] 3.5 各チャンクの応答を Pydantic で validate。スキーマ違反は warning + スキップ
+- [x] 3.6 チャンク単位の暴走ガード（削除総時間 > 30%）を実装。違反チャンクは丸ごとドロップ
+- [x] 3.7 個別の削除候補が 8 秒超ならドロップ（チャンク単位ではなく削除候補単位）
+- [x] 3.8 チャンク間の重複は呼出側の `merge_ranges` に任せる（関数内で merge しない）
+- [x] 3.9 `logger.info("coherence pass: chunks=%d failed=%d input_words=%d deletions=%d dropped_seconds=%.2f dry_run=%s", ...)` を出力
 
 ## 4. 全体ガード（呼出側）
 
-- [ ] 4.1 残存 word 数 50% チェック: `detect_coherence_violations` の戻り値を仮適用してみて、残存 word 数が元の 50% 未満なら結果を破棄
-- [ ] 4.2 上記ガードは `backend/app/routers/video.py` の呼出側で実装する（関数内のチャンク単位ガードでは見えない総合的な暴走を検出するため）
+- [x] 4.1 残存 word 数 50% チェック: `detect_coherence_violations` の戻り値を仮適用してみて、残存 word 数が元の 50% 未満なら結果を破棄
+- [x] 4.2 上記ガードは `backend/app/routers/video.py` の呼出側で実装（関数内のチャンク単位ガードでは見えない総合的な暴走を検出するため）
 
 ## 5. video.py 統合
 
-- [ ] 5.1 既存のジャンプカット検出群が `extra_cuts` を作る既存箇所を特定し、その**直後**に本パスを挿入する
-- [ ] 5.2 既存 `extra_cuts` を一度 `merge_ranges` で統合して「生存範囲」を計算 → `extra_cuts` を考慮した「生存 word 列」を取り出す
-- [ ] 5.3 `detect_coherence_violations(surviving_words)` を呼ぶ
-- [ ] 5.4 Dry-run モードならログ + JSON ダンプして終了。`extra_cuts` には追加しない
-- [ ] 5.5 本適用時は暴走ガード（残存 50% チェック）を通過したら `extra_cuts.extend(deletions)`。最終 `merge_ranges` で統合
-- [ ] 5.6 jump_cut_notes に「コヒーレンスパス: deletions=N total=T.TTs」を追記してユーザー表示
+- [x] 5.1 既存のジャンプカット検出群が `extra_cuts` を作る既存箇所（line 404-407）の**直後**に本パスを挿入
+- [x] 5.2 既存 `extra_cuts` を考慮した「生存 word 列」を取り出す（word.start が cut range 内に入らない word のみ）
+- [x] 5.3 `detect_coherence_violations(surviving_words)` を呼ぶ
+- [x] 5.4 Dry-run モードならログ + JSON ダンプして終了。`extra_cuts` には追加しない
+- [x] 5.5 本適用時は暴走ガード（残存 50% チェック）を通過したら `extra_cuts = merge_ranges(extra_cuts + coh_deletions)`
+- [x] 5.6 jump_cut_notes に「コヒーレンスパス: deletions=N total=T.TTs」を追記してユーザー表示
 
 ## 6. Dry-run JSON ダンプ
 
-- [ ] 6.1 `job_dir/coherence_dryrun.json` に `{"deletions": [...], "summary": "...", "applied": false, "guard_actions": [...]}` 形式で書き出す
-- [ ] 6.2 guard_actions には「runaway guard activated on chunk 2」「dropped 1 deletion exceeding 8s」等のガード作動履歴を含める
+- [x] 6.1 `job_dir/coherence_dryrun.json` に `{"deletions": [...], "summary": "...", "applied": false, "rejected_by_overall_guard": bool, "guard_actions": [...]}` 形式で書き出す
+- [x] 6.2 guard_actions には「runaway」「dropped」「out-of-range」等のガード作動履歴を含める
 
 ## 7. テスト
 
-- [ ] 7.1 `detect_coherence_violations` が `ENABLE_LLM_COHERENCE_PASS=0` で即 `[]` を返すテスト
-- [ ] 7.2 LLM_PROVIDER 未設定で `[]` を返すテスト
-- [ ] 7.3 短尺入力で LLM が 1 回だけ呼ばれるテスト
-- [ ] 7.4 長尺入力でチャンク数分だけ呼ばれるテスト
-- [ ] 7.5 LLM が削除総時間 > 30% を返したらチャンク全体が破棄されるテスト
-- [ ] 7.6 LLM が 8 秒超の単一削除を返したらその候補だけドロップされるテスト
-- [ ] 7.7 LLM が例外を投げても `[]` を返し warning を出すテスト
-- [ ] 7.8 Pydantic スキーマ違反応答が warning + スキップになるテスト
-- [ ] 7.9 video.py の統合テスト: 残存 word 50% 未満の応答を破棄し既存 `extra_cuts` のみで処理続行
-- [ ] 7.10 Dry-run モードで `extra_cuts` に追加されないことを確認するテスト
+- [x] 7.1 `detect_coherence_violations` が `ENABLE_LLM_COHERENCE_PASS=0` で即 empty を返すテスト
+- [x] 7.2 LLM_PROVIDER 未設定で empty を返すテスト
+- [x] 7.3 短尺入力で LLM が 1 回だけ呼ばれるテスト
+- [x] 7.4 長尺入力でチャンク数分だけ呼ばれるテスト
+- [x] 7.5 LLM が削除総時間 > 30% を返したらチャンク全体が破棄されるテスト
+- [x] 7.6 LLM が 8 秒超の単一削除を返したらその候補だけドロップされるテスト
+- [x] 7.7 LLM が例外を投げても empty を返し warning を出すテスト
+- [x] 7.8 Pydantic スキーマ違反応答が warning + スキップになるテスト
+- [ ] 7.9 video.py の統合テスト: 残存 word 50% 未満の応答を破棄し既存 `extra_cuts` のみで処理続行（dry-run評価で代替予定）
+- [ ] 7.10 Dry-run モードで `extra_cuts` に追加されないことを確認するテスト（dry-run評価で代替予定）
 
 ## 8. Dry-run 評価（合格基準前段）
 

@@ -229,6 +229,193 @@ def detect_restatements(words: list[dict]) -> list[dict]:
     return result
 
 
+# ===== LLM コヒーレンスパス =====
+# 既存検出群（filler / restatement / tempo / redundancy / word_gap / oversized）の
+# 後段に挿入する別レイヤー。生存 word 列に対し「日本語として意味が通る最小subset」
+# を得るための削除候補を返す。
+#
+# OpenSpec: openspec/changes/llm-coherence-pass/
+
+_COHERENCE_MAX_DELETION_RATIO = 0.30  # チャンクの削除合計 / チャンク尺の上限
+_COHERENCE_MAX_SINGLE_DELETION_SEC = 8.0  # 単一削除区間の長さ上限
+
+
+class _CoherenceDeletion(BaseModel):
+    start: float
+    end: float
+    reason: str = ""
+    confidence: float = 0.0
+
+
+class _CoherenceResponse(BaseModel):
+    deletions: list[_CoherenceDeletion] = Field(default_factory=list)
+    summary: str = ""
+
+
+_COHERENCE_SYSTEM_PROMPT = """あなたは日本語動画編集の校正アシスタントです。
+入力は字幕用 transcript の word 列です。すでに無音削除と言い直し検出を経て、いま残っている発話だけが渡されています。
+
+各 word: `{"i": index, "t": text, "s": start_sec, "e": end_sec}` 形式の JSON 行。
+
+タスク: この transcript を「日本語として意味が通る最小のサブセット」にしたい場合、削除すべき word の連続範囲を返してください。
+
+判定基準:
+1. 同じ意味を 2 回以上言っている箇所 → 後の方を残す（前を削除）
+2. 自己訂正の中間状態（直後に言い直しているのに残っている） → 中間状態を削除
+3. 文脈が前後と繋がらず浮いている発話 → 削除
+4. 結論や具体例を補強する重要発話は残す
+5. 削除候補の合計時間は入力総尺の 30% 以下に抑える
+6. 単一の削除候補は 8 秒以下（長い場合は複数に分割）
+7. 削除すると前後が日本語として繋がらなくなるなら削除しない
+
+出力は必ず以下の JSON 形式で返す:
+{
+  "deletions": [
+    {"start": float, "end": float, "reason": "短い説明", "confidence": 0.0-1.0}
+  ],
+  "summary": "transcript 全体の状態と削除方針を1〜2文で"
+}
+
+削除候補が無い場合は {"deletions": [], "summary": "問題なし"} を返す。"""
+
+
+def _coherence_enabled() -> bool:
+    return os.getenv("ENABLE_LLM_COHERENCE_PASS", "0").strip().lower() in ("1", "true", "yes")
+
+
+def _coherence_dry_run() -> bool:
+    return os.getenv("LLM_COHERENCE_PASS_DRY_RUN", "0").strip().lower() in ("1", "true", "yes")
+
+
+def _format_words_for_coherence(words: list[dict]) -> str:
+    lines: list[str] = []
+    for i, w in enumerate(words):
+        lines.append(
+            json.dumps(
+                {"i": i, "t": w["text"], "s": round(float(w["start"]), 2), "e": round(float(w["end"]), 2)},
+                ensure_ascii=False,
+            )
+        )
+    return "\n".join(lines)
+
+
+def detect_coherence_violations(words: list[dict]) -> dict:
+    """LLM コヒーレンスパス。既存検出後の生存 word 列を入力に、
+    日本語として意味が通る最小subsetを得るための削除候補を返す。
+
+    機能フラグ `ENABLE_LLM_COHERENCE_PASS=1` が必要。デフォルトは無効。
+    60 秒以上の入力は `_split_words_into_chunks` で分割呼出し、各チャンク
+    単位で暴走ガード（削除総時間 ≤ 30%）と単一削除上限（8 秒）を適用。
+    LLM 不通・スキーマ違反・全チャンク失敗の場合は空 deletions を返す。
+
+    Returns:
+        {
+          "deletions": [{"start": float, "end": float, "reason": str, "confidence": float}, ...],
+          "summary": str,
+          "chunks_total": int,
+          "chunks_failed": int,
+          "guard_actions": list[str],
+        }
+    """
+    empty: dict = {
+        "deletions": [],
+        "summary": "",
+        "chunks_total": 0,
+        "chunks_failed": 0,
+        "guard_actions": [],
+    }
+
+    if not _coherence_enabled():
+        return empty
+    if not words:
+        return empty
+
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    if provider not in ("openai", "anthropic"):
+        logger.warning("coherence pass disabled: LLM not configured")
+        return empty
+    if provider == "openai" and not os.getenv("OPENAI_API_KEY"):
+        logger.warning("coherence pass disabled: LLM not configured")
+        return empty
+    if provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
+        logger.warning("coherence pass disabled: LLM not configured")
+        return empty
+
+    chunks = _split_words_into_chunks(words)
+    n_chunks = len(chunks)
+    deletions: list[dict] = []
+    summaries: list[str] = []
+    guard_actions: list[str] = []
+    chunks_failed = 0
+
+    for i, chunk in enumerate(chunks):
+        chunk_min = min(w["start"] for w in chunk)
+        chunk_max = max(w["end"] for w in chunk)
+        chunk_dur = chunk_max - chunk_min
+        input_text = _format_words_for_coherence(chunk)
+        try:
+            if provider == "openai":
+                raw = _call_openai(input_text, system_prompt=_COHERENCE_SYSTEM_PROMPT)
+            else:
+                raw = _call_anthropic(input_text, system_prompt=_COHERENCE_SYSTEM_PROMPT)
+            payload = _extract_json(raw)
+            parsed = _CoherenceResponse.model_validate(payload)
+        except (ValidationError, json.JSONDecodeError, Exception) as e:
+            logger.warning("coherence chunk %d/%d failed: %s", i + 1, n_chunks, e)
+            chunks_failed += 1
+            guard_actions.append(f"chunk {i + 1}/{n_chunks} failed: {type(e).__name__}")
+            continue
+
+        # チャンク単位で削除候補をフィルタ
+        chunk_deletions: list[dict] = []
+        for d in parsed.deletions:
+            if d.end <= d.start:
+                continue
+            if d.start < chunk_min - 0.01 or d.end > chunk_max + 0.01:
+                guard_actions.append(
+                    f"chunk {i + 1}: dropped out-of-range deletion {d.start:.2f}-{d.end:.2f}"
+                )
+                continue
+            duration = d.end - d.start
+            if duration > _COHERENCE_MAX_SINGLE_DELETION_SEC:
+                guard_actions.append(
+                    f"chunk {i + 1}: dropped {duration:.2f}s deletion (> {_COHERENCE_MAX_SINGLE_DELETION_SEC}s)"
+                )
+                continue
+            chunk_deletions.append({
+                "start": d.start,
+                "end": d.end,
+                "reason": d.reason.strip()[:100],
+                "confidence": max(0.0, min(1.0, d.confidence)),
+            })
+
+        # チャンク単位の暴走ガード: 削除合計 > 30%
+        total_del = sum(c["end"] - c["start"] for c in chunk_deletions)
+        if chunk_dur > 0 and total_del / chunk_dur > _COHERENCE_MAX_DELETION_RATIO:
+            guard_actions.append(
+                f"chunk {i + 1}: runaway guard (deleted {total_del:.2f}s / {chunk_dur:.2f}s = {100 * total_del / chunk_dur:.1f}%)"
+            )
+            continue  # チャンク丸ごと破棄
+
+        deletions.extend(chunk_deletions)
+        if parsed.summary.strip():
+            summaries.append(parsed.summary.strip())
+
+    total_del_seconds = sum(d["end"] - d["start"] for d in deletions)
+    logger.info(
+        "coherence pass: chunks=%d failed=%d input_words=%d deletions=%d dropped_seconds=%.2f dry_run=%s",
+        n_chunks, chunks_failed, len(words), len(deletions), total_del_seconds, _coherence_dry_run(),
+    )
+
+    return {
+        "deletions": deletions,
+        "summary": " / ".join(summaries),
+        "chunks_total": n_chunks,
+        "chunks_failed": chunks_failed,
+        "guard_actions": guard_actions,
+    }
+
+
 class _CorrectionItem(BaseModel):
     index: int
     text: str

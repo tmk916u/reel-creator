@@ -61,6 +61,7 @@ from app.services.llm import (
     detect_restatements, correct_transcript_segments, extract_keywords, generate_hook,
     detect_topics, select_bgm_style, generate_captions, predict_buzz_score,
     summarize_video_context, summarize_with_mishearings,
+    detect_coherence_violations, _coherence_enabled, _coherence_dry_run,
 )
 from app.services.vad import detect_silence_silero, snap_silences_to_word_boundaries
 
@@ -404,6 +405,60 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 filler_cuts + tempo_cuts + restatement_cuts + redundant_cuts
                 + word_gap_cuts + oversized_cuts
             )
+
+            # LLM コヒーレンスパス（既存検出後の生存 word 列を別観点で再検出）
+            # OpenSpec: openspec/changes/llm-coherence-pass/
+            if _coherence_enabled() and words:
+                surviving = [
+                    w for w in words
+                    if not any(c["start"] <= w["start"] < c["end"] for c in extra_cuts)
+                ]
+                if surviving:
+                    coh_result = detect_coherence_violations(surviving)
+                    coh_deletions = list(coh_result["deletions"])
+
+                    # 残存 word 50% ガード（チャンク単位の暴走ガードでは見えない総合的な
+                    # 暴走を捕捉する）。コヒーレンス削除を仮適用して、生存 word のうち
+                    # 何個が残るかをカウント。50% を切ったら丸ごと破棄。
+                    rejected_overall = False
+                    if coh_deletions:
+                        remaining = [
+                            w for w in surviving
+                            if not any(d["start"] <= w["start"] < d["end"] for d in coh_deletions)
+                        ]
+                        if len(remaining) < 0.5 * len(surviving):
+                            coh_result["guard_actions"].append(
+                                f"overall: remaining {len(remaining)} / {len(surviving)} words < 50%, "
+                                f"all coherence deletions rejected"
+                            )
+                            coh_deletions = []
+                            rejected_overall = True
+
+                    if _coherence_dry_run():
+                        # Dry-run: extra_cuts に追加せず JSON ダンプ
+                        import json as _json
+                        dryrun_path = job_dir / "coherence_dryrun.json"
+                        dryrun_path.write_text(
+                            _json.dumps({
+                                "deletions": coh_result["deletions"],
+                                "summary": coh_result["summary"],
+                                "chunks_total": coh_result["chunks_total"],
+                                "chunks_failed": coh_result["chunks_failed"],
+                                "guard_actions": coh_result["guard_actions"],
+                                "applied": False,
+                                "rejected_by_overall_guard": rejected_overall,
+                            }, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                        jump_cut_notes.append(
+                            f"コヒーレンスパス (dry-run): 候補 {len(coh_result['deletions'])} 件 → {dryrun_path.name}"
+                        )
+                    elif coh_deletions:
+                        extra_cuts = merge_ranges(extra_cuts + coh_deletions)
+                        total_secs = sum(d["end"] - d["start"] for d in coh_deletions)
+                        jump_cut_notes.append(
+                            f"コヒーレンスパス: {len(coh_deletions)} 区間 {total_secs:.1f}秒 を追加削除"
+                        )
 
         # ASR-aware silence 保護: 1段目 ASR が word を認識した範囲は silero VAD が
         # 「無音」と判断していても voice_segments に物理的に残す。 silero と ASR の
