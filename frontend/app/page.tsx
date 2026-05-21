@@ -17,6 +17,7 @@ import {
   type JobResult,
   type TranscriptSegment,
 } from "@/lib/api";
+import { primeAudio, playCompletionSound } from "@/lib/sound";
 
 type Step = "upload" | "settings" | "preview" | "processing" | "done";
 
@@ -46,6 +47,8 @@ export default function Home() {
     async (settings: ProcessSettings) => {
       setStep("processing");
       setError(null);
+      // user gesture 内で AudioContext を起こす（autoplay 制限の回避）
+      primeAudio();
 
       try {
         await startProcessing(jobId, settings);
@@ -56,6 +59,7 @@ export default function Home() {
             setProgressEvent(event);
 
             if (event.status === "completed") {
+              playCompletionSound();
               const jobResult = await getResult(jobId);
               setResult(jobResult);
               setStep("done");

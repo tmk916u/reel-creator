@@ -21,6 +21,7 @@ services:
       - /app/node_modules
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8001
+      - NEXT_PUBLIC_BUILD_LABEL=main
     depends_on:
       - backend
 
