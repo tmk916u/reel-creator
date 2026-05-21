@@ -811,10 +811,11 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 )
                 final_output = str(output_path)
             except Exception as e:
-                jump_cut_notes.append(f"統合パス失敗: {e}")
-                # フォールバック: 何もせずカット結果を使う
-                shutil.copy2(cut_output, str(output_path))
-                final_output = str(output_path)
+                # apply_pipeline_combined は字幕・演出・BGM・SFX を1つの ffmpeg
+                # コマンドにまとめるためモノリシックで、部分失敗を区別できない。
+                # 字幕なし動画を「完了」として返すと公開可能品質の判定が破綻する
+                # ため、ここではフォールバックせず失敗で扱う（cut.mp4 は job_dir に残る）。
+                raise RuntimeError(f"演出統合に失敗しました（字幕/演出/BGM/SFX いずれか）: {e}") from e
         else:
             if str(output_path) != cut_output:
                 shutil.copy2(cut_output, str(output_path))
