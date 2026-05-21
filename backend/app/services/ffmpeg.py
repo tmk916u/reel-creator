@@ -712,10 +712,15 @@ def apply_pipeline_combined(
     sfx_timestamps_sec: list[float] | None = None,
     sfx_volume: float = 0.15,
     topic_style: str = "default",  # default | sleek | clean
+    apply_loudnorm: bool = True,
+    loudnorm_i: float = -14.0,  # IG/TikTok Reels 推奨値（EBU R128）
+    loudnorm_tp: float = -1.0,
+    loudnorm_lra: float = 11.0,
 ) -> str:
     """すべての動画オーバーレイ・音響処理を1つの ffmpeg パスでまとめて適用する。
 
     現状の chain（subtitle→topics→hook→cta→bgm）を 6 パスから 1 パスに圧縮。
+    apply_loudnorm=True で audio chain 末尾に EBU R128 ラウドネス正規化を挿入。
     """
     style_cfg = _topic_style_config(topic_style)
     font_file = "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"
@@ -846,16 +851,26 @@ def apply_pipeline_combined(
     # フィルタグラフ統合
     parts: list[str] = []
     has_video = bool(video_filters)
-    has_audio_extra = len(audio_mix_labels) > 1
+    has_audio_mix = len(audio_mix_labels) > 1
+    audio_out_label: str | None = None  # 最終的な audio output label（None なら "0:a" を map）
 
     if has_video:
         parts.append(f"[0:v]{','.join(video_filters)}[vout]")
-    if has_audio_extra:
+    if has_audio_mix:
         parts.extend(audio_segments)
         parts.append(
             f"{''.join(audio_mix_labels)}amix=inputs={len(audio_mix_labels)}"
-            f":duration=first:dropout_transition=0[aout]"
+            f":duration=first:dropout_transition=0[amix_out]"
         )
+        audio_out_label = "[amix_out]"
+
+    if apply_loudnorm:
+        # loudnorm は audio chain の末尾で常に最後に適用する（gain 計算が最終値に依存）
+        source = audio_out_label or "[0:a]"
+        parts.append(
+            f"{source}loudnorm=I={loudnorm_i}:TP={loudnorm_tp}:LRA={loudnorm_lra}[aout]"
+        )
+        audio_out_label = "[aout]"
 
     if not parts:
         # 何もしない -> コピー
@@ -872,8 +887,8 @@ def apply_pipeline_combined(
         cmd += ["-map", "[vout]"]
     else:
         cmd += ["-map", "0:v"]
-    if has_audio_extra:
-        cmd += ["-map", "[aout]"]
+    if audio_out_label:
+        cmd += ["-map", audio_out_label]
     else:
         cmd += ["-map", "0:a"]
     cmd += [

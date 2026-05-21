@@ -788,38 +788,31 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 if not bgm_path_str:
                     jump_cut_notes.append(f"BGMファイル未配置（{bgm_style}）")
 
-        # Stage 7: 全演出を1パスで適用
-        needs_combined = any([
-            subtitle_file_str, topics_for_overlay, hook_text_str, cta_text_str,
-            bgm_path_str, sfx_path_str,
-        ])
+        # Stage 7: 全演出 + 音量正規化を1パスで適用
+        # 字幕・演出・BGM・SFX のどれも要求されない場合でも、loudnorm を必ず通す
+        # ため apply_pipeline_combined を必ず呼ぶ（公開可能品質 -14 LUFS 担保）。
         output_path = job_dir / "output.mp4"
-        if needs_combined:
-            job.update({"stage": "render", "progress": 90, "message": "演出を統合適用中..."})
-            try:
-                apply_pipeline_combined(
-                    cut_output, str(output_path), job_dir,
-                    subtitle_file=subtitle_file_str,
-                    subtitle_force_style=subtitle_force_style,
-                    topics=topics_for_overlay,
-                    hook_text=hook_text_str,
-                    cta_text=cta_text_str,
-                    bgm_path=bgm_path_str,
-                    sfx_path=sfx_path_str,
-                    sfx_timestamps_sec=sfx_timestamps_list,
-                    topic_style=settings.topic_style,
-                )
-                final_output = str(output_path)
-            except Exception as e:
-                # apply_pipeline_combined は字幕・演出・BGM・SFX を1つの ffmpeg
-                # コマンドにまとめるためモノリシックで、部分失敗を区別できない。
-                # 字幕なし動画を「完了」として返すと公開可能品質の判定が破綻する
-                # ため、ここではフォールバックせず失敗で扱う（cut.mp4 は job_dir に残る）。
-                raise RuntimeError(f"演出統合に失敗しました（字幕/演出/BGM/SFX いずれか）: {e}") from e
-        else:
-            if str(output_path) != cut_output:
-                shutil.copy2(cut_output, str(output_path))
+        job.update({"stage": "render", "progress": 90, "message": "演出と音量を統合適用中..."})
+        try:
+            apply_pipeline_combined(
+                cut_output, str(output_path), job_dir,
+                subtitle_file=subtitle_file_str,
+                subtitle_force_style=subtitle_force_style,
+                topics=topics_for_overlay,
+                hook_text=hook_text_str,
+                cta_text=cta_text_str,
+                bgm_path=bgm_path_str,
+                sfx_path=sfx_path_str,
+                sfx_timestamps_sec=sfx_timestamps_list,
+                topic_style=settings.topic_style,
+            )
             final_output = str(output_path)
+        except Exception as e:
+            # apply_pipeline_combined は字幕・演出・BGM・SFX・音量正規化 を1つの ffmpeg
+            # コマンドにまとめるためモノリシックで、部分失敗を区別できない。
+            # 字幕なし動画を「完了」として返すと公開可能品質の判定が破綻する
+            # ため、ここではフォールバックせず失敗で扱う（cut.mp4 は job_dir に残る）。
+            raise RuntimeError(f"演出統合に失敗しました（字幕/演出/BGM/SFX/音量 いずれか）: {e}") from e
 
         silence_removed = original_duration - processed_duration
         final_message = "処理が完了しました"
