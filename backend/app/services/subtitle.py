@@ -73,29 +73,78 @@ def segments_to_srt(segments: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _normalize_repeated_chars(text: str) -> str:
+    """ASR ノイズで生まれる連続重複文字を去重する。
+
+    ReazonSpeech NeMo の subword 重複出力 (例: 「ほほとんど」「ダエットをお客様」)
+    のうち、 **同一文字 2 連続** は 1 文字に圧縮する。 **3 連続以上** は意図的な
+    強調 (例: 「あああ」「うううん」) と見なして保持する。
+
+    例:
+        「ほほとんど」 → 「ほとんど」
+        「めめんたる」 → 「めんたる」
+        「あああ」 → 「あああ」 (3 連続は保持)
+    """
+    if not text or len(text) < 2:
+        return text
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        # 同一文字の連続をカウント
+        j = i
+        while j < n and text[j] == text[i]:
+            j += 1
+        run_len = j - i
+        if run_len == 2:
+            # 2 連続 → 1 文字に圧縮
+            out.append(text[i])
+        else:
+            # 1 文字 or 3 連続以上はそのまま
+            out.append(text[i] * run_len)
+        i = j
+    return "".join(out)
+
+
 def words_to_segments(
     words: list[dict],
-    max_chars: int = 18,
-    max_gap: float = 0.6,
+    max_chars: int = 12,
+    max_gap: float = 0.4,
     lead_time: float = 0.05,
     tail_time: float = 0.20,
 ) -> list[dict]:
-    """単語リストを字幕表示用のセグメントへグループ化する。
+    """単語リストを字幕表示用のセグメントへ「意味のかたまり」 chunk 分割する。
 
-    句読点・長い無音・最大文字数で区切る。
-    視聴者が読みやすいように、字幕の開始を lead_time だけ早め、終わりを tail_time だけ伸ばす。
+    OpenSpec: subtitle-meaning-chunking
 
-    word に `is_word_start: bool` が含まれていれば、max_chars を超えても
-    単語の途中では切らず、次の語頭まで持ち越す（ReazonSpeech の subword 出力対策）。
+    3 階層の chunk 境界判定:
+        1. 強境界 (必ず flush): word.text 末尾が「。」「、」「!」「?」
+        2. 中境界 (flush): 次 word との gap ≥ max_gap (デフォルト 0.4 秒)
+        3. 弱境界 (条件付き flush): chunk 文字数 ≥ max_chars
+
+    clamp_oversized_word_ends で `_orig_end` を持つ word (ASR ノイズで word.text と
+    実発話が一致しない) は **独立 chunk として隔離** する (前後 word と結合しない)。
+
+    word.text は `_normalize_repeated_chars` で重複文字を去重してから処理する。
+
+    視認性向上: 字幕の開始を lead_time だけ前倒し、 終わりを tail_time だけ後ろに伸ばす。
     """
     if not words:
         return []
+
+    # 入力 word の text を正規化 (重複文字去重)
+    normalized = []
+    for w in words:
+        text = _normalize_repeated_chars(w.get("text", ""))
+        normalized.append({**w, "text": text})
+    words = normalized
 
     segments = []
     current_words: list[dict] = []
     current_text = ""
 
     def flush():
+        nonlocal current_words, current_text
         if not current_words:
             return
         segments.append({
@@ -104,59 +153,51 @@ def words_to_segments(
             "text": current_text.strip(),
             "words": list(current_words),
         })
+        current_words = []
+        current_text = ""
 
-    # 単語境界が一向に来ない場合の絶対上限（SentencePiece マーカーが希薄な
-    # ReazonSpeech 出力で is_word_start=False が連続して flush されないのを防ぐ）
-    hard_limit = max(int(max_chars * 1.5), max_chars + 4)
-    # 単一文字の格助詞・接続助詞・活用語尾: この直後で flush すると
-    # 「〜は/〜が/〜て/〜ば」 で文が途切れて見えるので、 できる限り次の語まで持ち越す
-    _trailing_particles = set("はがをにでとのもへやかなてばしず")
-    for i, w in enumerate(words):
+    def _gap_before(next_word: dict) -> float:
+        if not current_words:
+            return 0.0
+        cur = current_words[-1]
+        cur_end = cur.get("_orig_end", cur["end"])
+        return next_word["start"] - cur_end
+
+    for w in words:
         text = w["text"]
-        gap = w["start"] - current_words[-1]["end"] if current_words else 0.0
-        # is_word_start 未指定は True（WhisperX/faster-whisper の word は単語単位なので常に境界）
-        is_word_start = w.get("is_word_start", True)
+        is_clamped = "_orig_end" in w
 
-        over_chars = len(current_text) + len(text) > max_chars
-        over_hard = len(current_text) + len(text) > hard_limit
-        # 末尾が格助詞なら不自然な切れ目を避けるため flush を抑制(絶対上限は守る)
-        ends_with_particle = (
-            current_text and current_text[-1] in _trailing_particles
-        )
-        # 単語の途中では切らない（subword の中で字幕改行しない）が、
-        # 絶対上限を超えるなら is_word_start に関係なく強制 flush
-        should_flush_before = current_words and (
-            gap > max_gap
-            or (over_chars and is_word_start and not ends_with_particle)
-            or over_hard
-        )
-        if should_flush_before:
+        # clamp 済み word は独立 chunk: 前 chunk を flush してから単独で flush
+        if is_clamped:
             flush()
-            current_words = []
-            current_text = ""
+            current_words.append(w)
+            current_text += text
+            flush()
+            continue
+
+        # 中境界: gap ≥ max_gap
+        if current_words and _gap_before(w) >= max_gap:
+            flush()
+
+        # 弱境界: chunk 文字数が max_chars を超える
+        # (新規 word を加える前に判定し、 超えるなら flush)
+        if current_words and len(current_text) + len(text) > max_chars:
+            flush()
 
         current_words.append(w)
         current_text += text
 
-        # 「、」 では flush しない (短い断片を量産する原因のため)。
-        # 文末記号 (。！？!?.) のみで flush する。
-        if text and text[-1] in "。！？!?.":
+        # 強境界: word.text 末尾が文末記号 (「、」 は弱境界扱いで flush しない: 短い断片
+        # を量産する副作用があるため、 past change で確立した設計を踏襲)
+        if text and text[-1] in "。!?！？.":
             flush()
-            current_words = []
-            current_text = ""
 
-    if current_words:
-        flush()
+    flush()
 
     # 隣接セグメント間の重複テキスト除去（Whisperチャンク境界での再記述を解消）
     segments = _dedupe_adjacent_overlaps(segments)
-    # 短すぎるセグメントを次の/前のセグメントに統合（ぶつ切り感の解消 + #8 文字数比率改善）
-    segments = _merge_short_segments(
-        segments,
-        min_dur=0.6,
-        min_chars=8,
-        max_chars=max(int(max_chars * 1.4), 14),
-    )
+    # 1 文字 dialogue (clamp 済みでない) を隣接と統合する後処理
+    segments = _merge_orphan_chars(segments, max_chars=max_chars * 2)
 
     # 視認性向上: lead_time だけ前倒し / tail_time だけ後ろに伸ばす
     # ただし隣のセグメントと被らないよう調整
@@ -228,20 +269,20 @@ def _dedupe_adjacent_overlaps(segments: list[dict]) -> list[dict]:
     return out
 
 
-def _merge_short_segments(
+def _merge_orphan_chars(
     segments: list[dict],
-    min_dur: float = 0.6,
-    min_chars: int = 8,
     max_chars: int = 24,
 ) -> list[dict]:
-    """短すぎる/フラグメント的なセグメントを隣のセグメントに統合する。
+    """1 文字 dialogue を隣接 dialogue に統合する後処理。
 
-    統合判定:
-    1. 前段が句点で終わっていれば統合しない (文の区切り尊重)
-    2. どちらかが min_chars 未満 (短すぎる) + 合計 ≤ max_chars + ギャップ < 3 秒 → 統合
-    3. 両方が短時間 (<min_dur) + 合計 ≤ max_chars + ギャップ < 0.8 秒 → 統合
+    clamp 済み word に由来する dialogue (元 word に `_orig_end` がある) は隔離維持
+    する必要があるため、 「clamp 済み word を含む dialogue」 は統合対象外。
 
-    min_chars と max_chars は呼出側で max_chars × 1.4 のような上限制御で渡される。
+    統合条件:
+    - 単一 dialogue の text が 1 文字
+    - 含まれる word が clamp 済みでない
+    - 統合後の合計が max_chars 以下
+    - 前段が句点 (「。」「!」「?」) で終わっていない
     """
     if len(segments) < 2:
         return segments
@@ -250,30 +291,26 @@ def _merge_short_segments(
         prev = out[-1]
         prev_text = prev.get("text", "").strip()
         cur_text = seg.get("text", "").strip()
-        prev_dur = prev["end"] - prev["start"]
-        cur_dur = seg["end"] - seg["start"]
+        cur_words = seg.get("words") or []
+        prev_words = prev.get("words") or []
+
+        # clamp 済み word を含む dialogue は隔離 (統合しない)
+        has_clamped_cur = any("_orig_end" in w for w in cur_words)
+        has_clamped_prev = any("_orig_end" in w for w in prev_words)
+
+        # 統合候補は cur が 1 文字かつ両側 clamp なしの場合のみ
+        is_orphan = (
+            len(cur_text) == 1
+            and not has_clamped_cur
+            and not has_clamped_prev
+        )
         combined_len = len(prev_text) + len(cur_text)
-        gap = seg["start"] - prev["end"]
+        prev_ends_sentence = prev_text and prev_text[-1] in "。！？!?."
 
-        # 前段が句点 (。！？!?.) で終わっていれば文の終わり → 統合しない
-        # 「、」 は文の中の区切りなので統合可能とする
-        prev_ends_with_sentence_end = prev_text and prev_text[-1] in "。！？!?."
-
-        either_short = len(prev_text) < min_chars or len(cur_text) < min_chars
-        both_short_dur = prev_dur < min_dur and cur_dur < min_dur
-
-        should_merge = False
-        if not prev_ends_with_sentence_end and combined_len <= max_chars:
-            if both_short_dur and gap < 0.8:
-                should_merge = True
-            elif either_short and gap < 3.0:
-                should_merge = True
-
-        if should_merge:
+        if is_orphan and not prev_ends_sentence and combined_len <= max_chars:
             prev["end"] = seg["end"]
             prev["text"] = (prev_text + cur_text).strip()
-            if "words" in prev or "words" in seg:
-                prev["words"] = list(prev.get("words", [])) + list(seg.get("words", []))
+            prev["words"] = list(prev_words) + list(cur_words)
         else:
             out.append(dict(seg))
     return out

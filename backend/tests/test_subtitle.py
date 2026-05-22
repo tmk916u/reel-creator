@@ -253,43 +253,123 @@ def test_words_to_segments_holds_connective_particle_te():
     assert segments[0]["text"] == "あって次へ"
 
 
-def test_merge_short_segments_under_min_chars():
-    """8 文字未満の Dialogue は隣接と統合される(統合後合計 ≤ max_chars × 1.4 まで)。"""
-    from app.services.subtitle import _merge_short_segments
+# === subtitle-meaning-chunking (Phase 1, 2, 3) ===
 
-    segments = [
-        {"start": 0.0, "end": 1.0, "text": "短い"},
-        {"start": 1.05, "end": 2.0, "text": "つづき"},
+def test_normalize_repeated_chars_compresses_pair():
+    """同一文字 2 連続 → 1 文字に圧縮 (ASR ノイズ正規化)"""
+    from app.services.subtitle import _normalize_repeated_chars
+    assert _normalize_repeated_chars("ほほとんど") == "ほとんど"
+    assert _normalize_repeated_chars("めめんたる") == "めんたる"
+
+
+def test_normalize_repeated_chars_keeps_triple():
+    """同一文字 3 連続以上は意図的な強調として保持"""
+    from app.services.subtitle import _normalize_repeated_chars
+    assert _normalize_repeated_chars("あああ") == "あああ"
+    assert _normalize_repeated_chars("うううん") == "うううん"
+
+
+def test_normalize_repeated_chars_handles_empty_and_single():
+    from app.services.subtitle import _normalize_repeated_chars
+    assert _normalize_repeated_chars("") == ""
+    assert _normalize_repeated_chars("あ") == "あ"
+
+
+def test_words_to_segments_clamped_word_is_isolated():
+    """clamp 済み word (_orig_end あり) は前後と結合せず単独 dialogue になる"""
+    words = [
+        {"start": 0.0, "end": 0.5, "text": "結論"},
+        # clamp 済み word: text 「お」 だけだが実発話は長い
+        {"start": 1.0, "end": 1.12, "text": "お", "_orig_end": 13.0},
+        {"start": 14.0, "end": 14.5, "text": "次の話"},
     ]
-    # min_chars=8、 max_chars=14、 句点なし、 gap < 3.0 → 統合
-    out = _merge_short_segments(segments, min_chars=8, max_chars=14, min_dur=0.6)
+    segments = words_to_segments(words, lead_time=0, tail_time=0)
+    # 3 個の独立 dialogue: 結論 / お / 次の話
+    texts = [s["text"] for s in segments]
+    assert "お" in texts, f"clamp word が独立 dialogue になっていない: {texts}"
+
+
+def test_words_to_segments_word_gap_boundary():
+    """word 間 gap ≥ max_gap (デフォルト 0.4) で flush"""
+    words = [
+        {"start": 0.0, "end": 0.5, "text": "今日は"},
+        {"start": 0.5, "end": 1.0, "text": "雨です"},  # gap 0
+        {"start": 1.5, "end": 2.0, "text": "明日は"},  # gap 0.5 ≥ 0.4 → flush
+        {"start": 2.0, "end": 2.5, "text": "晴れです"},
+    ]
+    segments = words_to_segments(words, max_gap=0.4, max_chars=100, lead_time=0, tail_time=0)
+    assert len(segments) == 2
+    assert segments[0]["text"] == "今日は雨です"
+    assert segments[1]["text"] == "明日は晴れです"
+
+
+def test_words_to_segments_word_gap_uses_orig_end():
+    """gap 計算は前 word の _orig_end を優先 (clamp で生まれた人工的な隙間を無視)"""
+    words = [
+        {"start": 0.0, "end": 0.5, "text": "結論"},
+        # clamp 済み word
+        {"start": 1.0, "end": 1.12, "text": "お", "_orig_end": 13.0},
+        # 次 word: clamp word の _orig_end (13.0) からの gap は 0.5s
+        {"start": 13.5, "end": 14.0, "text": "次"},
+    ]
+    segments = words_to_segments(words, max_gap=0.4, lead_time=0, tail_time=0)
+    # 「お」 は clamp 済みで独立 dialogue → 次の「次」 とは別 dialogue になる
+    texts = [s["text"] for s in segments]
+    assert "お" in texts
+
+
+def test_words_to_segments_normalizes_repeated_chars_at_entry():
+    """words_to_segments 入口で重複文字が去重される"""
+    words = [
+        {"start": 0.0, "end": 1.0, "text": "ほほとんど。"},
+    ]
+    segments = words_to_segments(words, lead_time=0, tail_time=0)
+    assert segments[0]["text"] == "ほとんど。"
+
+
+def test_merge_orphan_chars_merges_single_char():
+    """1 文字 dialogue は前段と統合される (前段が句点で終わらない場合)"""
+    from app.services.subtitle import _merge_orphan_chars
+    segments = [
+        {"start": 0.0, "end": 1.0, "text": "結論から", "words": [
+            {"start": 0.0, "end": 1.0, "text": "結論から"},
+        ]},
+        {"start": 1.0, "end": 1.2, "text": "の", "words": [
+            {"start": 1.0, "end": 1.2, "text": "の"},
+        ]},
+    ]
+    out = _merge_orphan_chars(segments, max_chars=24)
     assert len(out) == 1
-    assert out[0]["text"] == "短いつづき"
+    assert out[0]["text"] == "結論からの"
 
 
-def test_merge_short_segments_respects_max_chars():
-    """統合候補の合計が max_chars を超える場合は統合しない。"""
-    from app.services.subtitle import _merge_short_segments
-
+def test_merge_orphan_chars_preserves_clamped():
+    """clamp 済み word を含む 1 文字 dialogue は隔離維持 (統合しない)"""
+    from app.services.subtitle import _merge_orphan_chars
     segments = [
-        {"start": 0.0, "end": 1.0, "text": "短いセグメント"},   # 7 文字
-        {"start": 1.05, "end": 2.0, "text": "ながいうしろのほう"},  # 9 文字
+        {"start": 0.0, "end": 1.0, "text": "結論", "words": [
+            {"start": 0.0, "end": 1.0, "text": "結論"},
+        ]},
+        {"start": 1.0, "end": 1.12, "text": "お", "words": [
+            {"start": 1.0, "end": 1.12, "text": "お", "_orig_end": 13.0},
+        ]},
     ]
-    # 合計 16 文字 > max_chars=14 → 統合しない
-    out = _merge_short_segments(segments, min_chars=8, max_chars=14, min_dur=0.6)
-    assert len(out) == 2
+    out = _merge_orphan_chars(segments, max_chars=24)
+    assert len(out) == 2, f"clamp 済み word が統合された: {[s['text'] for s in out]}"
 
 
-def test_merge_short_segments_respects_sentence_end():
-    """前段が句点で終わっていれば、 短くても統合しない (文の境界尊重)。"""
-    from app.services.subtitle import _merge_short_segments
-
+def test_merge_orphan_chars_respects_sentence_end():
+    """前段が「。」 で終わっていれば 1 文字 dialogue でも統合しない"""
+    from app.services.subtitle import _merge_orphan_chars
     segments = [
-        {"start": 0.0, "end": 1.0, "text": "短い。"},
-        {"start": 1.05, "end": 2.0, "text": "つづき"},
+        {"start": 0.0, "end": 1.0, "text": "結論です。", "words": [
+            {"start": 0.0, "end": 1.0, "text": "結論です。"},
+        ]},
+        {"start": 1.0, "end": 1.2, "text": "あ", "words": [
+            {"start": 1.0, "end": 1.2, "text": "あ"},
+        ]},
     ]
-    # 前段が「。」 で終わる → 統合しない
-    out = _merge_short_segments(segments, min_chars=8, max_chars=14, min_dur=0.6)
+    out = _merge_orphan_chars(segments, max_chars=24)
     assert len(out) == 2
 
 

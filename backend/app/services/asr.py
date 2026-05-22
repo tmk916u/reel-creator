@@ -306,6 +306,7 @@ def clamp_oversized_word_ends(
     """
     out: list[dict] = []
     fixed_count = 0
+    SHRINK_THRESHOLD = 0.2  # この秒数以上の短縮があった時のみ clamp 扱いに
     for w in words:
         dur = w["end"] - w["start"]
         if dur > max_word_duration:
@@ -313,11 +314,17 @@ def clamp_oversized_word_ends(
             char_count = max(1, len(text))
             reasonable_dur = max(char_count / chars_per_sec, min_duration)
             new_end = w["start"] + min(reasonable_dur, dur)
-            # _orig_end を保存: 下流で「クランプ前の範囲」を「ASR が認識し損なった
-            # 発話の可能性が高い区間」として扱える。 word_gap_cuts はこの区間を
-            # ギャップとして削除しないようにする。
-            out.append({**w, "end": new_end, "_orig_end": w["end"]})
-            fixed_count += 1
+            # 有意な短縮があった時のみ clamp 適用 + _orig_end 保存
+            # (例: 文字数と duration が概ね一致する word は ASR ノイズではないので
+            # 触らない。 「皆さんが悩まれている」 10 文字 ≈ 1.25s 等)
+            if w["end"] - new_end >= SHRINK_THRESHOLD:
+                # _orig_end を保存: 下流で「クランプ前の範囲」を「ASR が認識し損なった
+                # 発話の可能性が高い区間」として扱える。 word_gap_cuts はこの区間を
+                # ギャップとして削除しないようにする。
+                out.append({**w, "end": new_end, "_orig_end": w["end"]})
+                fixed_count += 1
+            else:
+                out.append(w)
         else:
             out.append(w)
     if fixed_count:
