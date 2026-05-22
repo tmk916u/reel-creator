@@ -338,6 +338,7 @@ def _run_processing(job_id: str, settings: ProcessRequest):
         words: list[dict] = []
         pre_cut_segments: list[dict] = []
         extra_cuts: list[dict] = []
+        oversized_cuts: list[dict] = []
         jump_cut_notes: list[str] = []
 
         cached = job_store.get(job_id) or {}
@@ -393,6 +394,9 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 jump_cut_notes.append(f"発話間ギャップ {len(word_gap_cuts)} 箇所を圧縮")
             # 異常に長い word の中央を削除（ReazonSpeech の subword timestamp 推定で
             # 発話間の沈黙が word に取り込まれる現象への対策）
+            # 注意: oversized_cuts は "word 内部の中央" を削除する性質なので、 単語境界
+            # snap を通すと両端が word 端に弾かれて削除区間が反転 → 破棄される。
+            # extra_cuts とは別バケットで保持し、 snap 後に merge する。
             oversized_cuts = detect_oversized_words(
                 words, max_word_duration=settings.max_word_duration,
             )
@@ -403,7 +407,7 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 )
             extra_cuts = merge_ranges(
                 filler_cuts + tempo_cuts + restatement_cuts + redundant_cuts
-                + word_gap_cuts + oversized_cuts
+                + word_gap_cuts
             )
 
             # LLM コヒーレンスパス（既存検出後の生存 word 列を別観点で再検出）
@@ -476,10 +480,21 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             silences = protect_words_from_silences(silences, words)
 
         # 単語境界スナップ: silence と extra_cuts が単語の中で切らないよう補正
+        # 注意1: silences と extra_cuts を独立に snap すると、 隣接区間が word 境界
+        # 調整時に微小ギャップ（0.05-0.15s）で分割され、 後段の min_cut_length=0.15
+        # フィルタで弾かれて output に「ゾンビ無音」として残る現象が起きる。
+        # 一度マージしてから 1 回だけ snap → 再マージで隣接区間を統合する。
+        # 注意2: oversized_cuts は word 内部の中央削除なので snap させない。 snap を
+        # 通すと両端が word 端に弾かれて削除区間が反転して破棄される。 snap 後に
+        # merge_ranges で統合することで、 word 内部の中央削除と word 境界 snap を
+        # 両立させる。
         if words:
-            silences = snap_silences_to_word_boundaries(silences, words)
-            if extra_cuts:
-                extra_cuts = snap_silences_to_word_boundaries(extra_cuts, words)
+            combined_cuts = merge_ranges(list(silences) + list(extra_cuts))
+            combined_cuts = snap_silences_to_word_boundaries(combined_cuts, words)
+            combined_cuts = merge_ranges(combined_cuts + list(oversized_cuts))
+            # extra_cuts は空にして、 統合結果を silences として下流に渡す
+            silences = combined_cuts
+            extra_cuts = []
 
         voice_segments = compute_voice_segments(
             silences, original_duration,

@@ -265,3 +265,49 @@ def test_detect_redundant_speech_too_few_words():
     words = _make_words(["短", "い", "発", "話"])
     cuts = detect_redundant_speech(words, window_words=10)
     assert cuts == []
+
+
+def test_oversized_cut_inside_word_is_dropped_by_snap():
+    """oversized_cuts は word 内部の中央削除なので、 snap を通すと両端が word 端に
+    弾かれて削除区間が反転 → 破棄されることを確認する（バグの再現）。
+
+    このため video.py では oversized_cuts を snap から除外し、 snap 後に
+    merge_ranges で統合する必要がある。
+    """
+    from app.services.vad import snap_silences_to_word_boundaries
+
+    # ReazonSpeech subword timestamp 推定ノイズによる oversized word (5.12s)
+    words = [{"start": 3.59, "end": 8.71, "text": "お"}]
+    # detect_oversized_words 相当: word の中央 (keep_head=0.2, keep_tail=0.2) を削除
+    oversized = [{"start": 3.79, "end": 8.51}]  # 4.72s 削除候補
+
+    snapped = snap_silences_to_word_boundaries(oversized, words)
+    # word 内部のため両端とも word 境界で反転 → 破棄
+    assert snapped == [], (
+        f"snap で oversized が破棄される想定だが、 残った: {snapped}"
+    )
+
+
+def test_oversized_cut_preserved_when_merged_after_snap():
+    """video.py の修正フロー: oversized_cuts を snap 後に merge することで、
+    word 内部の中央削除を保ちつつ、 silences/extra_cuts の word 境界 snap も両立できる。
+    """
+    from app.services.vad import snap_silences_to_word_boundaries
+
+    words = [
+        {"start": 3.59, "end": 8.71, "text": "お"},
+        {"start": 9.05, "end": 9.30, "text": "結"},
+    ]
+    # word の境界をまたぐ silence (snap で word 端に揃えるべき)
+    silences = [{"start": 8.65, "end": 9.10}]
+    # word 内部の oversized 削除 (snap させてはいけない)
+    oversized = [{"start": 3.79, "end": 8.51}]
+
+    snapped = snap_silences_to_word_boundaries(silences, words)
+    final = merge_ranges(snapped + oversized)
+
+    # oversized の中央削除が最終結果に残っている
+    assert any(
+        abs(c["start"] - 3.79) < 0.01 and abs(c["end"] - 8.51) < 0.01
+        for c in final
+    ), f"oversized 削除が残っていない: {final}"
