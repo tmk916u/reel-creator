@@ -51,6 +51,7 @@ from app.services.subtitle import (
     transcribe_audio, transcribe_with_words, segments_to_srt, segments_to_ass,
     words_to_segments, apply_keyword_highlight, detect_suspicious_segments,
 )
+from app.services.asr import clamp_oversized_word_ends
 from app.config import CTA_TEXT
 from app.services.jump_cut import (
     detect_filler_ranges, detect_tempo_ranges, detect_redundant_speech,
@@ -219,6 +220,7 @@ async def transcribe_preview(job_id: str, settings: TranscribeRequest):
     words, _segs = transcribe_with_words(
         audio_path, initial_prompt=settings.transcript_prompt or None,
     )
+    words = clamp_oversized_word_ends(words)
 
     corrections = load_corrections()
     if corrections:
@@ -359,6 +361,9 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                     audio_path,
                     initial_prompt=settings.transcript_prompt or None,
                 )
+                # subword timestamp 推定で word.end が次の word.start に押し出される
+                # 現象 (「お」 word が 5-21秒) を、 文字数ベースの妥当な値にクランプ
+                words = clamp_oversized_word_ends(words)
 
                 # 同音異義語の辞書置換（タイムスタンプは保持）
                 corrections = load_corrections()
@@ -598,6 +603,7 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                     cut_audio,
                     initial_prompt=settings.transcript_prompt or None,
                 )
+                words_cut = clamp_oversized_word_ends(words_cut)
                 if corrections and words_cut:
                     words_cut = apply_corrections_to_words(words_cut, corrections)
 

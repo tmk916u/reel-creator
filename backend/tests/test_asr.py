@@ -243,3 +243,58 @@ def test_reazonspeech_no_retry_for_non_state_error(monkeypatch):
         assert cleared["count"] == 0  # cache_clear は呼ばれない
     finally:
         sys.modules.pop("reazonspeech.nemo.asr", None)
+
+
+# === clamp_oversized_word_ends ===
+
+def test_clamp_oversized_word_ends_fixes_long_word():
+    """duration > max の word は文字数ベースの妥当な end にクランプ"""
+    words = [
+        {"start": 0.0, "end": 0.5, "text": "あ"},  # 通常
+        {"start": 33.06, "end": 45.14, "text": "お"},  # 12.08s 異常
+        {"start": 45.14, "end": 45.30, "text": "客"},  # 通常
+    ]
+    out = asr.clamp_oversized_word_ends(words, max_word_duration=1.0, chars_per_sec=8.0)
+    assert out[0] == words[0]  # 変更なし
+    # 「お」 1文字 → 1/8 = 0.125s に補正 → end = 33.06 + 0.125 = 33.185
+    assert out[1]["start"] == 33.06
+    assert abs(out[1]["end"] - 33.185) < 0.001
+    assert "text" in out[1]
+    assert out[2] == words[2]  # 変更なし
+
+
+def test_clamp_oversized_word_ends_respects_min_duration():
+    """min_duration を下回らない (1文字でも 0.1秒は確保)"""
+    words = [{"start": 0.0, "end": 5.0, "text": "あ"}]
+    out = asr.clamp_oversized_word_ends(words, max_word_duration=1.0, chars_per_sec=100.0, min_duration=0.1)
+    # 1文字 / 100 = 0.01s だが min=0.1 で 0.1 にクランプ
+    assert abs(out[0]["end"] - 0.1) < 0.001
+
+
+def test_clamp_oversized_word_ends_multichar_word():
+    """複数文字 word は文字数比例で妥当な duration"""
+    words = [{"start": 10.0, "end": 25.0, "text": "あいうえお"}]  # 5文字, 15s
+    out = asr.clamp_oversized_word_ends(words, max_word_duration=1.0, chars_per_sec=8.0)
+    # 5/8 = 0.625s
+    assert abs(out[0]["end"] - 10.625) < 0.001
+
+
+def test_clamp_oversized_word_ends_preserves_other_fields():
+    """他の word フィールドは保持"""
+    words = [{"start": 0.0, "end": 5.0, "text": "あ", "source": "agree", "is_word_start": True}]
+    out = asr.clamp_oversized_word_ends(words, max_word_duration=1.0)
+    assert out[0]["source"] == "agree"
+    assert out[0]["is_word_start"] is True
+    assert out[0]["text"] == "あ"
+
+
+def test_clamp_oversized_word_ends_uses_word_field_as_fallback():
+    """WhisperX 形式 (word キー) でも動作"""
+    words = [{"start": 0.0, "end": 5.0, "word": "あいう"}]
+    out = asr.clamp_oversized_word_ends(words, max_word_duration=1.0, chars_per_sec=8.0)
+    # 3文字 / 8 = 0.375s
+    assert abs(out[0]["end"] - 0.375) < 0.001
+
+
+def test_clamp_oversized_word_ends_empty():
+    assert asr.clamp_oversized_word_ends([]) == []

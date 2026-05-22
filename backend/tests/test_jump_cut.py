@@ -340,3 +340,47 @@ def test_oversized_cut_preserved_when_merged_after_snap():
         abs(c["start"] - 3.79) < 0.01 and abs(c["end"] - 8.51) < 0.01
         for c in final
     ), f"oversized 削除が残っていない: {final}"
+
+
+# === _orig_end を尊重する (clamp 後の人工的な隙間を無視) ===
+
+def test_detect_word_gaps_skips_clamped_region():
+    """clamp された word の後ろ (_orig_end までの範囲) は word_gap として削除しない。
+
+    clamp_oversized_word_ends で word.end が短縮された結果、 word の後ろに
+    「人工的な隙間」ができる。 そこは ASR が認識し損なった発話の可能性が高い
+    ので、 word_gap として削除してはいけない。
+    """
+    words = [
+        # clamp された word: end は 33.18 だが、 元は 45.14 だった
+        {"start": 33.06, "end": 33.18, "text": "お", "_orig_end": 45.14},
+        # 次の word
+        {"start": 45.20, "end": 45.40, "text": "い"},
+    ]
+    cuts = detect_word_gaps(words, max_gap=0.25, target_gap=0.10)
+    # gap は _orig_end ベースで 45.20 - 45.14 = 0.06s → max_gap 以下なので削除しない
+    assert cuts == [], f"clamp 領域が削除された: {cuts}"
+
+
+def test_detect_word_gaps_still_works_for_normal_words():
+    """通常 word (_orig_end なし) には従来通り word_gap が機能する"""
+    words = [
+        {"start": 0.0, "end": 1.0, "text": "あ"},
+        {"start": 3.0, "end": 3.5, "text": "い"},  # 2.0s gap
+    ]
+    cuts = detect_word_gaps(words, max_gap=0.25, target_gap=0.10)
+    assert len(cuts) == 1
+    assert abs(cuts[0]["start"] - 1.10) < 0.001
+    assert abs(cuts[0]["end"] - 3.0) < 0.001
+
+
+def test_detect_tempo_ranges_skips_clamped_region():
+    """tempo (文末ポーズ) も clamp された word の後ろは tempo gap として削除しない"""
+    from app.services.jump_cut import detect_tempo_ranges
+    words = [
+        {"start": 0.0, "end": 1.0, "text": "あ。", "_orig_end": 10.0},  # 文末+clamped
+        {"start": 10.05, "end": 10.5, "text": "い"},
+    ]
+    cuts = detect_tempo_ranges(words, max_pause=0.6, target_pause=0.3)
+    # gap は _orig_end ベースで 10.05 - 10.0 = 0.05 → max_pause 以下
+    assert cuts == [], f"clamp 領域が tempo で削除された: {cuts}"

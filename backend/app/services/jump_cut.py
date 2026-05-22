@@ -123,9 +123,11 @@ def detect_tempo_ranges(
         cur_text = cur["text"].strip()
         if not cur_text or cur_text[-1] not in _PUNCTUATION:
             continue
-        gap = nxt["start"] - cur["end"]
+        # clamp 前の range を使う (clamp された word の後ろは tempo gap と見なさない)
+        cur_end_for_gap = cur.get("_orig_end", cur["end"])
+        gap = nxt["start"] - cur_end_for_gap
         if gap > max_pause:
-            cut_start = cur["end"] + target_pause
+            cut_start = cur_end_for_gap + target_pause
             cut_end = nxt["start"]
             if cut_end > cut_start + 0.01:
                 ranges.append({"start": cut_start, "end": cut_end})
@@ -188,6 +190,11 @@ def detect_word_gaps(
     - 鼻啜り音や息継ぎ（VAD が弱い人声として検出してしまう音）も、
       ReazonSpeech が text 化しなかった隙間として削除される。
 
+    注意: clamp_oversized_word_ends で短縮された word は `_orig_end` を持つ。
+    clamp 前の範囲 [end, _orig_end) は「ASR が認識し損なった発話の可能性が高い」
+    区間なので、 ここを word_gap として削除すると本物の発話まで消える。
+    gap 計算は `_orig_end` を優先して使う (clamp 後の人工的な隙間を除外)。
+
     Args:
         words: word-level transcript [{"start", "end", "text", ...}]
         max_gap: この秒数を超える gap を圧縮対象とする
@@ -200,9 +207,11 @@ def detect_word_gaps(
     for i in range(len(words) - 1):
         cur = words[i]
         nxt = words[i + 1]
-        gap = nxt["start"] - cur["end"]
+        # clamp 前の range を使う (clamp された word の後ろは gap と見なさない)
+        cur_end_for_gap = cur.get("_orig_end", cur["end"])
+        gap = nxt["start"] - cur_end_for_gap
         if gap > max_gap:
-            cut_start = cur["end"] + target_gap
+            cut_start = cur_end_for_gap + target_gap
             cut_end = nxt["start"]
             if cut_end > cut_start + 0.01:
                 ranges.append({"start": cut_start, "end": cut_end})

@@ -272,3 +272,57 @@ def transcribe_with_words(
             raise RuntimeError("ASR_BACKEND=whisperx ですが WhisperX が利用できません")
 
     return _transcribe_with_faster_whisper(audio_path, prompt, model_size)
+
+
+def clamp_oversized_word_ends(
+    words: list[dict],
+    max_word_duration: float = 1.0,
+    chars_per_sec: float = 8.0,
+    min_duration: float = 0.1,
+) -> list[dict]:
+    """word.end が異常に長い word の end を文字数ベースの妥当な値にクランプする。
+
+    ReazonSpeech NeMo は subword 単位の単一点 timestamp で、 word.end は実際の
+    発話終了ではなく「次の subword の検出位置」を反映する。 発話間に長い無音が
+    あると word.end が大幅に後ろにズレ、 word.duration が 5-21秒になることがある。
+
+    現実：
+    - word.start = 発話開始時刻 (おおむね正確)
+    - word.end = 次の subword 検出位置 (発話の終わりとは限らない)
+    - duration > 1秒の word は、 実発話 + 無音 + 次の発話の境界推定ノイズ
+
+    補正：word.end を「word.start + (文字数 / chars_per_sec)」にクランプ。
+    これで字幕タイミングが実発話に近づき、 word の後ろの無音区間は別途
+    silence detection で削除される。
+
+    Args:
+        words: word-level transcript [{"start", "end", "text" | "word", ...}]
+        max_word_duration: この秒数を超える word のみ補正対象
+        chars_per_sec: 文字数からの duration 逆算レート (日本語発話の平均 ~8)
+        min_duration: 最低 duration (1文字でも 0.1秒は確保)
+
+    Returns:
+        補正後 word リスト (元 word の他フィールドは保持)
+    """
+    out: list[dict] = []
+    fixed_count = 0
+    for w in words:
+        dur = w["end"] - w["start"]
+        if dur > max_word_duration:
+            text = (w.get("text") or w.get("word") or "").strip()
+            char_count = max(1, len(text))
+            reasonable_dur = max(char_count / chars_per_sec, min_duration)
+            new_end = w["start"] + min(reasonable_dur, dur)
+            # _orig_end を保存: 下流で「クランプ前の範囲」を「ASR が認識し損なった
+            # 発話の可能性が高い区間」として扱える。 word_gap_cuts はこの区間を
+            # ギャップとして削除しないようにする。
+            out.append({**w, "end": new_end, "_orig_end": w["end"]})
+            fixed_count += 1
+        else:
+            out.append(w)
+    if fixed_count:
+        logger.info(
+            "clamp_oversized_word_ends: %d/%d words 補正 (max=%.1fs, chars/s=%.1f)",
+            fixed_count, len(words), max_word_duration, chars_per_sec,
+        )
+    return out
