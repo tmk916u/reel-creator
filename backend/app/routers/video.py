@@ -394,11 +394,15 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 jump_cut_notes.append(f"発話間ギャップ {len(word_gap_cuts)} 箇所を圧縮")
             # 異常に長い word の中央を削除（ReazonSpeech の subword timestamp 推定で
             # 発話間の沈黙が word に取り込まれる現象への対策）
-            # 注意: oversized_cuts は "word 内部の中央" を削除する性質なので、 単語境界
+            # 注意1: oversized_cuts は "word 内部の中央" を削除する性質なので、 単語境界
             # snap を通すと両端が word 端に弾かれて削除区間が反転 → 破棄される。
             # extra_cuts とは別バケットで保持し、 snap 後に merge する。
+            # 注意2: 長い word の中央が「全部無音」とは限らない。 例えば「お」 word が
+            # 12秒で推定された場合、 中に「お客様が悩まれているダイエット」のような
+            # 実発話が含まれている。 silero VAD を渡して word 内の実無音区間のみを
+            # 削除対象にする。
             oversized_cuts = detect_oversized_words(
-                words, max_word_duration=settings.max_word_duration,
+                words, silences, max_word_duration=settings.max_word_duration,
             )
             if oversized_cuts:
                 total_secs = sum(c["end"] - c["start"] for c in oversized_cuts)
@@ -605,8 +609,13 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 # 「長い word に埋もれる沈黙」が新たに見つかることがある。
                 # これを再カットして cut2.mp4 を生成し、字幕も再マッピングする。
                 if settings.enable_jump_cut and words_cut:
+                    # cut_audio の VAD silence を取得し、 word 内の実無音区間のみを
+                    # 削除対象にする (元 audio と同じ方針)
+                    cut_silences = detect_silence_silero(
+                        cut_audio, min_silence_duration=settings.min_silence_duration,
+                    ) or []
                     oversized_2nd = detect_oversized_words(
-                        words_cut,
+                        words_cut, cut_silences,
                         max_word_duration=settings.max_word_duration,
                     )
                     # 施策G: ASR が word を一つも検出しなかった「冒頭・末尾の無発話」を削除

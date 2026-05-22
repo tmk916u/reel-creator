@@ -220,44 +220,73 @@ def test_detect_word_gaps_single_word():
     assert detect_word_gaps([{"start": 0.0, "end": 1.0, "text": "あ"}]) == []
 
 
-def test_detect_oversized_words_finds_long_word():
-    """word duration > max_word_duration の中央を削除区間にする"""
-    # 「首」 が 4.24秒 続くケース
+def test_detect_oversized_words_finds_silence_in_long_word():
+    """word duration > max_word_duration かつ word 内に VAD silence がある場合、
+    silence 部分のみを margin 引いて削除候補にする。"""
+    # 「首」 が 4.24秒 続くケース。 word 内に 3.5秒の VAD silence
     words = [
         {"start": 37.18, "end": 41.42, "text": "首"},
         {"start": 41.42, "end": 41.66, "text": "が"},
     ]
-    cuts = detect_oversized_words(words, max_word_duration=1.0, keep_head=0.2, keep_tail=0.2)
+    vad_silences = [{"start": 37.30, "end": 41.10}]  # word 内に 3.8s 無音
+    cuts = detect_oversized_words(
+        words, vad_silences, max_word_duration=1.0, margin=0.1,
+    )
     assert len(cuts) == 1
-    # 37.18 + 0.2 = 37.38, 41.42 - 0.2 = 41.22
-    assert abs(cuts[0]["start"] - 37.38) < 1e-6
-    assert abs(cuts[0]["end"] - 41.22) < 1e-6
+    # 37.30 + 0.1 = 37.40, 41.10 - 0.1 = 41.00
+    assert abs(cuts[0]["start"] - 37.40) < 1e-6
+    assert abs(cuts[0]["end"] - 41.00) < 1e-6
 
 
-def test_detect_oversized_words_skips_short_word():
-    """通常の word は対象外"""
-    words = [
-        {"start": 0.0, "end": 0.5, "text": "あ"},  # 0.5秒
-        {"start": 0.5, "end": 1.4, "text": "い"},  # 0.9秒
-    ]
-    cuts = detect_oversized_words(words, max_word_duration=1.0)
+def test_detect_oversized_words_protects_speech_in_long_word():
+    """VAD-aware の本質テスト: ASR が誤って 12秒の word を推定した場合、
+    word 内に実発話があれば VAD silence と重なる部分だけを削除する。
+
+    例: 「お」 word (33.06-45.14, 12.08s) 内に
+        - 無音 33.20-42.86 (9.66s) → 削除
+        - 発話 42.86-45.14 (「お客様が悩まれているダイエット」) → 保護
+    """
+    words = [{"start": 33.06, "end": 45.14, "text": "お"}]
+    vad_silences = [{"start": 33.20, "end": 42.86}]  # word 内の無音のみ
+    cuts = detect_oversized_words(words, vad_silences, max_word_duration=1.0)
+    assert len(cuts) == 1
+    # 削除は無音区間内のみ。 word の末尾 (発話部分) は保護される
+    assert cuts[0]["end"] <= 42.86, f"発話領域まで削除している: {cuts[0]}"
+
+
+def test_detect_oversized_words_no_silence_in_word_skips():
+    """long word でも word 内に VAD silence が無い場合は削除しない (安全側)"""
+    words = [{"start": 0.0, "end": 5.0, "text": "あ"}]  # 5秒の long word
+    vad_silences = [{"start": 10.0, "end": 15.0}]  # 別の場所
+    cuts = detect_oversized_words(words, vad_silences, max_word_duration=1.0)
     assert cuts == []
 
 
-def test_detect_oversized_words_keep_head_tail_protects_short_cuts():
-    """keep_head+keep_tail を引いて削除幅が極小になるなら出力しない"""
-    # 1.1秒 word、keep_head+keep_tail=0.4 → 削除幅 0.7秒(出力される)
-    words = [{"start": 0.0, "end": 1.1, "text": "あ"}]
-    cuts = detect_oversized_words(words, max_word_duration=1.0, keep_head=0.2, keep_tail=0.2)
-    assert len(cuts) == 1
-    # ギリギリ削除幅 = 0.06秒のケース(0.05 閾値を超えるか境界)
-    words2 = [{"start": 0.0, "end": 1.05, "text": "あ"}]
-    cuts2 = detect_oversized_words(words2, max_word_duration=1.0, keep_head=0.5, keep_tail=0.5)
-    assert cuts2 == []  # 0.05以下なので出力しない
+def test_detect_oversized_words_skips_short_word():
+    """通常の word は VAD silence の有無に関わらず対象外"""
+    words = [
+        {"start": 0.0, "end": 0.5, "text": "あ"},
+        {"start": 0.5, "end": 1.4, "text": "い"},
+    ]
+    vad_silences = [{"start": 0.2, "end": 1.3}]
+    cuts = detect_oversized_words(words, vad_silences, max_word_duration=1.0)
+    assert cuts == []
+
+
+def test_detect_oversized_words_min_cut_length_filters_tiny_silences():
+    """word 内 silence が min_cut_length 未満なら削除しない"""
+    words = [{"start": 0.0, "end": 5.0, "text": "あ"}]
+    # margin=0.1 を引くと有効長 0.1s しかない
+    vad_silences = [{"start": 1.0, "end": 1.3}]
+    cuts = detect_oversized_words(
+        words, vad_silences, max_word_duration=1.0,
+        min_cut_length=0.3, margin=0.1,
+    )
+    assert cuts == []
 
 
 def test_detect_oversized_words_empty():
-    assert detect_oversized_words([]) == []
+    assert detect_oversized_words([], []) == []
 
 
 def test_detect_redundant_speech_too_few_words():

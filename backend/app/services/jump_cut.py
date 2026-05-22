@@ -134,26 +134,30 @@ def detect_tempo_ranges(
 
 def detect_oversized_words(
     words: list[dict],
+    vad_silences: list[dict],
     max_word_duration: float = 1.0,
-    keep_head: float = 0.2,
-    keep_tail: float = 0.2,
+    min_cut_length: float = 0.3,
+    margin: float = 0.1,
 ) -> list[dict]:
-    """word.end - word.start が異常に長い word の中央部を削除候補にする。
+    """word.end - word.start が異常に長い word の中で、 VAD が「無音」と判定した
+    部分だけを削除候補にする。
 
     ReazonSpeech NeMo の subword は単一点 timestamp で、次の subword までの
     範囲を duration として推定する仕組み。発話の間に長い沈黙(意図的な
     ポーズや言い淀み)があると、前の subword の推定 duration が異常に
     長くなり、word.end が実発話より大幅に後ろにズレる。
 
-    例: 「きて」(36.94-37.18) → 「首」(37.18-41.42, 4.24秒!) の場合、
-    「首」word の中に約4秒の無音が埋もれている。これを keep_head/keep_tail
-    だけ残して中央を削除する。
+    例: 「お」word が 33.06-45.14 (12.08秒) と推定された場合、 word 内には
+    「お客様が悩まれているダイエット」という実発話 + 無音が混在している。
+    word の中央を一律に削除すると実発話まで切れるため、 silero VAD で
+    「無音」と判定された区間だけを削除候補にする。
 
     Args:
         words: word-level transcript [{"start", "end", "text", ...}]
-        max_word_duration: この秒数を超える word を対象に
-        keep_head: 削除区間の前に残す秒数(word 開始から)
-        keep_tail: 削除区間の後に残す秒数(word 終端まで)
+        vad_silences: silero VAD で検出した無音区間 [{"start", "end"}, ...]
+        max_word_duration: この秒数を超える word を対象に (短い word は対象外)
+        min_cut_length: word 内 silence がこの秒数未満なら削除しない
+        margin: 削除区間の両端に発話保護マージン (秒)
 
     Returns:
         削除区間リスト
@@ -161,12 +165,14 @@ def detect_oversized_words(
     ranges: list[dict] = []
     for w in words:
         dur = w["end"] - w["start"]
-        if dur > max_word_duration:
-            cut_start = w["start"] + keep_head
-            cut_end = w["end"] - keep_tail
-            if cut_end > cut_start + 0.05:
-                ranges.append({"start": cut_start, "end": cut_end})
-    return ranges
+        if dur <= max_word_duration:
+            continue
+        for s in vad_silences:
+            overlap_start = max(s["start"], w["start"]) + margin
+            overlap_end = min(s["end"], w["end"]) - margin
+            if overlap_end - overlap_start >= min_cut_length:
+                ranges.append({"start": overlap_start, "end": overlap_end})
+    return merge_ranges(ranges)
 
 
 def detect_word_gaps(
