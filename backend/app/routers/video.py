@@ -488,13 +488,49 @@ def _run_processing(job_id: str, settings: ProcessRequest):
         # 通すと両端が word 端に弾かれて削除区間が反転して破棄される。 snap 後に
         # merge_ranges で統合することで、 word 内部の中央削除と word 境界 snap を
         # 両立させる。
+        diag_silences_pre_snap = list(silences)
+        diag_extra_cuts_pre_snap = list(extra_cuts)
+        diag_oversized_cuts = list(oversized_cuts)
+        diag_combined_after_snap: list[dict] = []
         if words:
             combined_cuts = merge_ranges(list(silences) + list(extra_cuts))
             combined_cuts = snap_silences_to_word_boundaries(combined_cuts, words)
+            diag_combined_after_snap = list(combined_cuts)
             combined_cuts = merge_ranges(combined_cuts + list(oversized_cuts))
             # extra_cuts は空にして、 統合結果を silences として下流に渡す
             silences = combined_cuts
             extra_cuts = []
+
+        # 診断 dump: stage 毎の削除候補を job_dir/diagnostics.json に保存する。
+        # 後段で analyze_reel.py が読み、 各 stage の挙動を可視化できる。
+        # 構造的バグの再現/特定が transcript.json と diagnostics.json の 2 ファイル
+        # だけで完結する。
+        try:
+            _diag = {
+                "input_duration": original_duration,
+                "word_count": len(words),
+                "stages": {
+                    "silences_pre_snap": diag_silences_pre_snap,
+                    "extra_cuts_pre_snap": diag_extra_cuts_pre_snap,
+                    "oversized_cuts": diag_oversized_cuts,
+                    "combined_after_snap_pre_oversized": diag_combined_after_snap,
+                    "final_silences": list(silences),
+                },
+                "totals": {
+                    "silences_sec": round(sum(c["end"]-c["start"] for c in diag_silences_pre_snap), 2),
+                    "extra_cuts_sec": round(sum(c["end"]-c["start"] for c in diag_extra_cuts_pre_snap), 2),
+                    "oversized_sec": round(sum(c["end"]-c["start"] for c in diag_oversized_cuts), 2),
+                    "combined_after_snap_sec": round(sum(c["end"]-c["start"] for c in diag_combined_after_snap), 2),
+                    "final_silences_sec": round(sum(c["end"]-c["start"] for c in silences), 2),
+                },
+                "jump_cut_notes": list(jump_cut_notes),
+            }
+            import json as _json
+            (job_dir / "diagnostics.json").write_text(
+                _json.dumps(_diag, ensure_ascii=False, indent=2), encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning("diagnostics.json dump failed: %s", e)
 
         voice_segments = compute_voice_segments(
             silences, original_duration,

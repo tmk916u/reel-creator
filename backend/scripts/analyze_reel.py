@@ -128,6 +128,52 @@ def read_coherence(job_dir: Path) -> dict | None:
         return None
 
 
+def read_diagnostics(job_dir: Path) -> dict | None:
+    """video.py が出力する各 stage の削除候補スナップショットを読む。
+
+    無ければ None (古いジョブなど)。 あれば後段で oversized が実際に最終 silences
+    に含まれているかなどの整合性チェックに使える。
+    """
+    path = job_dir / "diagnostics.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _diagnostics_findings(diag: dict | None) -> list[str]:
+    """diagnostics から構造的バグの兆候を文字列リストで返す。"""
+    if not diag:
+        return []
+    findings: list[str] = []
+    stages = diag.get("stages") or {}
+    oversized = stages.get("oversized_cuts") or []
+    final = stages.get("final_silences") or []
+
+    # oversized cuts が最終的に削除リストに含まれているか
+    missing_oversized = []
+    for c in oversized:
+        covered = any(
+            fc["start"] <= c["start"] + 0.01 and fc["end"] + 0.01 >= c["end"]
+            for fc in final
+        )
+        if not covered:
+            missing_oversized.append(c)
+    if missing_oversized:
+        findings.append(
+            f"oversized_lost:{len(missing_oversized)}/{len(oversized)}件 が最終削除に未反映"
+        )
+    elif oversized:
+        findings.append(f"oversized_ok:{len(oversized)}件 全て削除に反映")
+
+    totals = diag.get("totals") or {}
+    if totals.get("oversized_sec", 0) >= 5.0:
+        findings.append(f"oversized_total:{totals['oversized_sec']}s (ASR ノイズ多め)")
+    return findings
+
+
 def read_subtitle_summary(job_dir: Path) -> dict | None:
     ass = job_dir / "subtitles.ass"
     if not ass.exists():
@@ -166,6 +212,7 @@ def analyze(job_id: str) -> dict:
     }
     loudness = get_loudness(job_dir / "output.mp4")
     coherence = read_coherence(job_dir)
+    diagnostics = read_diagnostics(job_dir)
     subtitle = read_subtitle_summary(job_dir)
 
     output_segs = reasr_output(job_dir / "output.mp4")
@@ -176,12 +223,16 @@ def analyze(job_id: str) -> dict:
     out_dur = durations.get("output") or 0.0
     silent_ratio = (total_gap_seconds / out_dur) if out_dur else 0.0
 
+    verdict = _verdict_signals(out_dur, speech_seconds, gaps, loudness)
+    verdict += _diagnostics_findings(diagnostics)
+
     return {
         "job_id": job_id,
         "job_dir": str(job_dir),
         "durations": durations,
         "loudness": loudness,
         "coherence": coherence,
+        "diagnostics_summary": (diagnostics or {}).get("totals"),
         "subtitle": subtitle,
         "output_segments": output_segs,
         "gaps": gaps,
@@ -191,7 +242,7 @@ def analyze(job_id: str) -> dict:
             "total_gap_seconds": round(total_gap_seconds, 2),
             "silent_ratio": round(silent_ratio, 3),
             "gap_count": len(gaps),
-            "verdict_signals": _verdict_signals(out_dur, speech_seconds, gaps, loudness),
+            "verdict_signals": verdict,
         },
     }
 
