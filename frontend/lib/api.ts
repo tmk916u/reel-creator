@@ -33,6 +33,9 @@ export interface ProcessSettings {
   enable_subtitles: boolean;
   enable_jump_cut?: boolean;
   enable_buzz_mode?: boolean;
+  editor_mode?: "rule_based" | "director";  // 編集方針
+  director_target_min?: number;
+  director_target_max?: number;
   transcript_prompt?: string;
   edited_segments?: TranscriptSegment[];
   font_size: "small" | "medium" | "large";

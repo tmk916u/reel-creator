@@ -89,6 +89,9 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
     enable_subtitles: false,
     enable_jump_cut: false,
     enable_buzz_mode: false,
+    editor_mode: "rule_based",
+    director_target_min: 50.0,
+    director_target_max: 80.0,
     transcript_prompt:
       "整体師が血流・筋肉・老廃物・不定愁訴・健康・整骨院・整体・姿勢・自律神経について解説する動画です。",
     font_size: "medium",
@@ -150,6 +153,48 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
           <p className="text-xs text-gray-500 mt-1">
             ボタン1つで字幕・カット・バズモードがおすすめ設定になります
           </p>
+        </div>
+
+        {/* 編集方針: rule_based (削るだけ) vs director (LLM がストーリー再構成) */}
+        <div>
+          <label className="block text-sm text-gray-300 mb-2">編集方針</label>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <button
+              onClick={() => setSettings((s) => ({ ...s, editor_mode: "rule_based" }))}
+              className={`text-left rounded-lg p-3 border transition-colors ${
+                settings.editor_mode === "rule_based"
+                  ? "bg-purple-500/20 border-purple-400 text-white"
+                  : "bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600"
+              }`}
+            >
+              <div className="font-semibold text-sm">✂️ 標準モード</div>
+              <div className="text-xs mt-1 opacity-80">
+                不要な間とフィラーを削除して短くする<br />
+                <span className="text-gray-400">推奨: 台本ありの撮影</span>
+              </div>
+            </button>
+            <button
+              onClick={() => setSettings((s) => ({ ...s, editor_mode: "director" }))}
+              className={`text-left rounded-lg p-3 border transition-colors ${
+                settings.editor_mode === "director"
+                  ? "bg-amber-500/20 border-amber-400 text-white"
+                  : "bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600"
+              }`}
+            >
+              <div className="font-semibold text-sm">
+                🎬 AI 監督モード <span className="text-xs px-1.5 py-0.5 bg-amber-500/30 rounded ml-1">Beta</span>
+              </div>
+              <div className="text-xs mt-1 opacity-80">
+                LLM がストーリーを設計して残す区間を決定<br />
+                <span className="text-gray-400">推奨: 雑撮り・言い直し多い動画</span>
+              </div>
+            </button>
+          </div>
+          {settings.editor_mode === "director" && (
+            <p className="text-xs text-amber-300 mt-2">
+              ※ Beta: LLM 失敗時は標準モードに自動フォールバックします。 処理時間 +5-15 秒、 LLM コスト +$0.05/本程度
+            </p>
+          )}
         </div>
 
         {/* 現在の処理モード を明示 */}

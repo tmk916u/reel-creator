@@ -54,6 +54,10 @@ class ProcessRequest(BaseModel):
     enable_subtitles: bool = False
     enable_jump_cut: bool = False
     enable_buzz_mode: bool = False  # 冒頭フック + モーション字幕
+    editor_mode: str = "rule_based"  # "rule_based" (既存、 削除候補ボトムアップ)
+                                     # | "director" (LLM が残す区間をトップダウン設計)
+    director_target_min: float = 50.0  # director mode の出力尺下限 (秒)
+    director_target_max: float = 80.0  # director mode の出力尺上限 (秒)
     transcript_prompt: str = ""  # Whisperに渡す文脈（テーマ・専門用語）
     font_size: FontSize = FontSize.MEDIUM
     subtitle_position: SubtitlePosition = SubtitlePosition.BOTTOM

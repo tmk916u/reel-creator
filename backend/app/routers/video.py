@@ -541,12 +541,50 @@ def _run_processing(job_id: str, settings: ProcessRequest):
         except Exception as e:
             logger.warning("diagnostics.json dump failed: %s", e)
 
-        voice_segments = compute_voice_segments(
-            silences, original_duration,
-            padding=settings.voice_padding,
-            extra_cuts=extra_cuts,
-            trim_leading=settings.trim_leading_silence,
-        )
+        # editor_mode == "director" ブランチ: LLM がストーリーを設計して残す clips を返す
+        # OpenSpec: llm-director-editor
+        # clips ∩ ¬silences で voice_segments を構築 → 既存の cut_and_concat 以降を再利用
+        # 失敗時 (LLM error, JSON 不正, 全 clip 破棄, 尺範囲外) は rule_based にフォールバック
+        director_used = False
+        if getattr(settings, "editor_mode", "rule_based") == "director":
+            try:
+                from app.services.director import (
+                    design_story, snap_clips_to_words, clips_to_voice_segments,
+                )
+                director_segments = pre_cut_segments or []
+                clips = design_story(
+                    director_segments,
+                    duration=original_duration,
+                    video_context="",  # video_context はこの時点では未生成。 将来統合
+                    target_duration_min=getattr(settings, "director_target_min", 50.0),
+                    target_duration_max=getattr(settings, "director_target_max", 80.0),
+                )
+                if clips:
+                    snapped = snap_clips_to_words(clips, words)
+                    voice_segments = clips_to_voice_segments(snapped, silences)
+                    director_used = True
+                    jump_cut_notes.append(
+                        f"LLM director: {len(snapped)} clips → {len(voice_segments)} voice segments"
+                    )
+                    logger.info(
+                        "director mode: clips=%d, voice_segments=%d, total=%.1fs",
+                        len(snapped), len(voice_segments),
+                        sum(v["end"] - v["start"] for v in voice_segments),
+                    )
+                else:
+                    jump_cut_notes.append("LLM director 失敗 → 標準モードにフォールバック")
+                    job.update({"message": "AI 監督モード失敗のため標準モードで処理"})
+            except Exception as e:
+                logger.exception("director mode 例外、 フォールバック: %s", e)
+                jump_cut_notes.append(f"LLM director 例外 ({e}) → 標準モードにフォールバック")
+
+        if not director_used:
+            voice_segments = compute_voice_segments(
+                silences, original_duration,
+                padding=settings.voice_padding,
+                extra_cuts=extra_cuts,
+                trim_leading=settings.trim_leading_silence,
+            )
 
         if not voice_segments:
             job.update({
