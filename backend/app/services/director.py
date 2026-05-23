@@ -40,9 +40,17 @@ DIRECTOR_SYSTEM_PROMPT = """\
 - 合計尺は **最低 50 秒、 目標 60 秒以上**
 - 元 transcript から「残すべき区間」 を選び、 順番はそのまま
 
+**🚫 重複絶対禁止 (最重要)**:
+- 同じ内容の発話が transcript に複数回登場しても、 clip では **必ず 1 回だけ** 採用する
+- 例: 「お客様が悩まれているダイエットの食事の話をしようと思います」 が transcript の
+  20-32秒 と 30-46秒 に 2 回出てくる場合、 どちらか 1 つ (短い方や状態の良い方) だけ採用
+- 「結論から言うと」「一番大事なのは健康です」 等の主張も transcript 内で繰り返されていれば 1 回のみ
+- 重複統合で尺が短くなっても、 50 秒を満たすために重複を入れてはいけない
+- 50 秒に満たない場合は他の発話 (理由・具体例) を増やして埋める
+
 削除すべき発話:
 - 言い直し、 噛み、 フィラー (「えー」「あの」)
-- 同じ内容の繰り返し (冒頭で「お客様が悩まれている」 を 2 回言っている等は 1 回だけ残す)
+- 同じ内容の繰り返し (上記参照、 必ず 1 回まで)
 - 結論につながらない雑談
 - 長い間 (3 秒以上の無発話)
 
@@ -167,6 +175,73 @@ def _validate_clips(raw_clips: list[Any], duration: float) -> list[Clip]:
     return valid
 
 
+def _normalize_for_dedup(text: str) -> str:
+    """重複判定用に text を正規化 (空白・記号除去)."""
+    return re.sub(r"[\s、。!?,.・　「」『』ー〜]+", "", text)
+
+
+def _text_similarity(a: str, b: str) -> float:
+    """2 つの text の文字 3-gram Jaccard 類似度 (短い方を基準).
+
+    短い方の n-gram のうち長い方に含まれる割合を返す。
+    重複検出に十分な精度で計算が軽い。
+    """
+    na = _normalize_for_dedup(a)
+    nb = _normalize_for_dedup(b)
+    if not na or not nb:
+        return 0.0
+    if na == nb:
+        return 1.0
+    shorter, longer = (na, nb) if len(na) <= len(nb) else (nb, na)
+    if len(shorter) < 3:
+        # 短すぎる text は substring 完全一致で判定
+        return 1.0 if shorter in longer else 0.0
+    ngrams = [shorter[i:i + 3] for i in range(len(shorter) - 2)]
+    hits = sum(1 for g in ngrams if g in longer)
+    return hits / len(ngrams)
+
+
+def _dedupe_clips(
+    clips: list[Clip],
+    similarity_threshold: float = 0.6,
+    max_time_gap: float = 30.0,
+) -> list[Clip]:
+    """LLM が「重複は 1 回」 ルールを守らなかった場合の後処理。
+
+    各 clip pair で text 類似度を見て、 類似 (≥ threshold) かつ近接
+    (time gap ≤ max_time_gap) のものは後発を破棄する。 これにより
+    「お客様が悩まれているダイエット」 を 3 回繰り返すような出力を防ぐ。
+
+    Args:
+        clips: validate 済み clip list (時系列順)
+        similarity_threshold: この値以上の類似度で重複と判定 (0.0-1.0)
+        max_time_gap: この秒数以内の近接 clip 同士のみ重複扱い (離れた繰り返しは別話題の可能性)
+
+    Returns:
+        重複除去後の clip list (時系列順、 order を 1 から振り直す)
+    """
+    if len(clips) < 2:
+        return list(clips)
+    kept: list[Clip] = [dict(clips[0])]  # type: ignore[arg-type]
+    dropped_count = 0
+    for c in clips[1:]:
+        # 既に採用した clips の中で最も近接するものと比較
+        time_gap = c["start"] - kept[-1]["end"]
+        sim = _text_similarity(kept[-1]["text"], c["text"])
+        if sim >= similarity_threshold and time_gap <= max_time_gap:
+            logger.info(
+                "director dedup: 破棄 clip (sim=%.2f, gap=%.1fs): %r ≈ %r",
+                sim, time_gap, kept[-1]["text"][:30], c["text"][:30],
+            )
+            dropped_count += 1
+            continue
+        kept.append(dict(c))  # type: ignore[arg-type]
+    if dropped_count:
+        for i, c in enumerate(kept, 1):
+            c["order"] = i
+    return kept
+
+
 def design_story(
     segments: list[dict],
     duration: float,
@@ -224,6 +299,15 @@ def design_story(
     if not clips:
         logger.warning("director: 有効な clip が 0 個 (全 %d 破棄)", len(raw_clips))
         return []
+
+    # LLM が「重複は 1 回」 ルールを守らないケースの後処理
+    pre_dedup = len(clips)
+    clips = _dedupe_clips(clips)
+    if len(clips) < pre_dedup:
+        logger.info(
+            "director: 重複除去 %d → %d clips",
+            pre_dedup, len(clips),
+        )
 
     total = sum(c["end"] - c["start"] for c in clips)
     if total < target_duration_min - 5 or total > target_duration_max + 10:

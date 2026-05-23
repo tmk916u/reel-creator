@@ -168,3 +168,84 @@ def test_design_story_extracts_code_fenced_json():
     with patch.object(director, "_call_llm", return_value=fake_response):
         clips = director.design_story(segments, duration=60.0, target_duration_min=50.0)
     assert len(clips) == 1
+
+
+# === _text_similarity ===
+
+def test_text_similarity_identical():
+    assert director._text_similarity("お客様が悩まれている", "お客様が悩まれている") == 1.0
+
+
+def test_text_similarity_substring_short():
+    # 1-2 文字は substring 一致
+    assert director._text_similarity("お", "お客様") == 1.0
+    assert director._text_similarity("ねこ", "わんこ") == 0.0
+
+
+def test_text_similarity_partial_match():
+    # ほぼ同じ
+    sim = director._text_similarity(
+        "お客様が悩まれているダイエットの食事への",
+        "お客様が悩まれているダイエットの食事の話",
+    )
+    assert sim >= 0.6
+
+
+def test_text_similarity_different():
+    sim = director._text_similarity("結論から言うと一番大事なのはメンタル", "ぜひそこを突き詰めてみてください")
+    assert sim < 0.3
+
+
+def test_text_similarity_ignores_punctuation():
+    # 句読点・空白の差は無視
+    a = "お客様が、悩まれている。"
+    b = "お客様が悩まれている"
+    assert director._text_similarity(a, b) == 1.0
+
+
+# === _dedupe_clips ===
+
+def test_dedupe_clips_removes_adjacent_duplicates():
+    """連続する重複 clip は後発を破棄"""
+    clips: list[director.Clip] = [
+        {"start": 0.0, "end": 7.0, "role": "intro", "order": 1,
+         "text": "お客様が悩まれているダイエットの食事への"},
+        {"start": 7.0, "end": 15.0, "role": "intro", "order": 2,
+         "text": "お客様が悩まれているダイエットの食事の話"},  # 重複
+        {"start": 16.0, "end": 30.0, "role": "main", "order": 3,
+         "text": "結論から言うと一番大事なのはメンタル"},  # 別話題
+    ]
+    out = director._dedupe_clips(clips, similarity_threshold=0.6, max_time_gap=30.0)
+    assert len(out) == 2
+    assert out[0]["text"].startswith("お客様")
+    assert out[1]["text"].startswith("結論")
+
+
+def test_dedupe_clips_keeps_distant_duplicates():
+    """time gap が max_time_gap を超える重複は別話題として残す"""
+    clips: list[director.Clip] = [
+        {"start": 0.0, "end": 5.0, "role": "intro", "order": 1, "text": "メンタルが大事"},
+        {"start": 50.0, "end": 55.0, "role": "cta", "order": 2, "text": "メンタルが大事"},
+    ]
+    out = director._dedupe_clips(clips, similarity_threshold=0.6, max_time_gap=30.0)
+    # time gap 45s > 30s なので両方残る
+    assert len(out) == 2
+
+
+def test_dedupe_clips_renumbers_order():
+    """重複除去後 order を 1 から振り直す"""
+    clips: list[director.Clip] = [
+        {"start": 0.0, "end": 5.0, "role": "intro", "order": 1, "text": "abc"},
+        {"start": 5.0, "end": 10.0, "role": "intro", "order": 2, "text": "abcd"},  # 重複
+        {"start": 10.0, "end": 20.0, "role": "main", "order": 3, "text": "different"},
+    ]
+    out = director._dedupe_clips(clips)
+    assert [c["order"] for c in out] == [1, 2]
+
+
+def test_dedupe_clips_empty_or_single():
+    assert director._dedupe_clips([]) == []
+    single: list[director.Clip] = [
+        {"start": 0.0, "end": 5.0, "role": "intro", "order": 1, "text": "x"},
+    ]
+    assert len(director._dedupe_clips(single)) == 1
