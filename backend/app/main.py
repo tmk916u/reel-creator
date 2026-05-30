@@ -15,7 +15,8 @@ logging.basicConfig(
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import video, publish
+from app.routers import video, publish, posts, connections
+from app.db import init_db
 
 TMP_DIR = Path("/app/tmp")
 CLEANUP_INTERVAL = 300  # 5 minutes
@@ -36,6 +37,10 @@ async def cleanup_old_jobs():
 @asynccontextmanager
 async def lifespan(app_instance):
     TMP_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        init_db()
+    except Exception:
+        logging.exception("DB 初期化に失敗しました")
     task = asyncio.create_task(cleanup_old_jobs())
     yield
     task.cancel()
@@ -56,6 +61,8 @@ app.add_middleware(
 
 app.include_router(video.router)
 app.include_router(publish.router)
+app.include_router(posts.router)
+app.include_router(connections.router)
 
 
 @app.get("/api/health")

@@ -43,3 +43,4 @@ backend/app/data/sfx/*.m4a
 test-videos/*.mov
 test-videos/*.mp4
 test-videos/*.webm
+.gstack/

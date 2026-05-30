@@ -1,6 +1,10 @@
 # backend/app/models/schemas.py
-from pydantic import BaseModel
+import uuid
+from datetime import datetime
 from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class JobStatus(str, Enum):
@@ -165,3 +169,119 @@ class PublishResult(BaseModel):
 class PublishResponse(BaseModel):
     job_id: str
     results: list[PublishResult]
+
+
+# --- 投稿機能 (social-publishing) ---
+
+PostPlatform = Literal["instagram", "youtube"]
+PrivacyStatus = Literal["public", "private", "unlisted"]
+
+
+class UploadVideoResponse(BaseModel):
+    video_id: uuid.UUID
+    file_url: str
+    thumbnail_url: str | None = None
+    duration_seconds: int | None = None
+    original_filename: str | None = None
+
+
+class PostCreate(BaseModel):
+    video_id: uuid.UUID
+    theme: str | None = None
+    memo: str | None = None
+    hashtags: str | None = None
+
+    post_to_instagram: bool = False
+    post_to_youtube: bool = False
+
+    instagram_caption: str | None = None
+    instagram_scheduled_at: datetime | None = None
+
+    youtube_title: str | None = None
+    youtube_description: str | None = None
+    youtube_scheduled_at: datetime | None = None
+    privacy_status: PrivacyStatus = "public"
+
+    @model_validator(mode="after")
+    def _validate(self):
+        if not self.post_to_instagram and not self.post_to_youtube:
+            raise ValueError("Instagram と YouTube のどちらか一方は ON にしてください")
+
+        if self.post_to_instagram:
+            if not (self.instagram_caption and self.instagram_caption.strip()):
+                raise ValueError("Instagram キャプションは必須です")
+            if self.instagram_scheduled_at is None:
+                raise ValueError("Instagram 投稿予定日時は必須です")
+
+        if self.post_to_youtube:
+            if not (self.youtube_title and self.youtube_title.strip()):
+                raise ValueError("YouTube タイトルは必須です")
+            if not (self.youtube_description and self.youtube_description.strip()):
+                raise ValueError("YouTube 説明文は必須です")
+            if self.youtube_scheduled_at is None:
+                raise ValueError("YouTube 投稿予定日時は必須です")
+
+        return self
+
+
+class PostUpdate(BaseModel):
+    theme: str | None = None
+    memo: str | None = None
+    hashtags: str | None = None
+    instagram_caption: str | None = None
+    instagram_scheduled_at: datetime | None = None
+    youtube_title: str | None = None
+    youtube_description: str | None = None
+    youtube_scheduled_at: datetime | None = None
+    privacy_status: PrivacyStatus | None = None
+
+
+class ScheduledPostOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    platform: str
+    scheduled_at: datetime | None = None
+    status: str
+    caption: str | None = None
+    title: str | None = None
+    description: str | None = None
+    hashtags: str | None = None
+    privacy_status: str | None = None
+    posted_url: str | None = None
+    external_post_id: str | None = None
+    error_message: str | None = None
+    retry_count: int
+    posted_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PostOut(BaseModel):
+    """動画 1 本 + 媒体別 scheduled_posts の集約。"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    file_url: str
+    thumbnail_url: str | None = None
+    duration_seconds: int | None = None
+    aspect_ratio: str | None = None
+    theme: str | None = None
+    memo: str | None = None
+    original_filename: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    posts: list[ScheduledPostOut] = []
+
+
+class ConnectionOut(BaseModel):
+    """SNS 連携状態（トークンは含めない）。"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    platform: str
+    account_name: str | None = None
+    external_account_id: str | None = None
+    is_active: bool
+    token_expires_at: datetime | None = None
+    created_at: datetime

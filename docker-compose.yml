@@ -1,4 +1,20 @@
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: reel
+      POSTGRES_PASSWORD: reel
+      POSTGRES_DB: reel
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     build: ./backend
     ports:
@@ -6,11 +22,17 @@ services:
     volumes:
       - ./backend:/app
       - backend-tmp:/app/tmp
+      - media-storage:/app/media
       - hf-cache:/root/.cache/huggingface
     env_file: ./backend/.env
     environment:
       - PYTHONUNBUFFERED=1
       - HF_HOME=/root/.cache/huggingface
+      - DATABASE_URL=postgresql+psycopg2://reel:reel@db:5432/reel
+      - MEDIA_DIR=/app/media
+    depends_on:
+      db:
+        condition: service_healthy
 
   frontend:
     build: ./frontend
@@ -28,3 +50,5 @@ services:
 volumes:
   backend-tmp:
   hf-cache:
+  db-data:
+  media-storage:
