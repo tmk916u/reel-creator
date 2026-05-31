@@ -15,8 +15,9 @@ logging.basicConfig(
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import video, publish, posts, connections
-from app.db import init_db
+from app.routers import video, publish, posts, connections, cron
+from app.db import init_db, SessionLocal
+from app.services.publisher import run_due_posts
 
 TMP_DIR = Path("/app/tmp")
 CLEANUP_INTERVAL = 300  # 5 minutes
@@ -34,6 +35,22 @@ async def cleanup_old_jobs():
                     shutil.rmtree(job_dir, ignore_errors=True)
 
 
+async def _run_due_posts_scheduled():
+    """予約時刻到来分を投稿する（APScheduler から呼ばれる）。"""
+    def _sync():
+        db = SessionLocal()
+        try:
+            return run_due_posts(db)
+        finally:
+            db.close()
+    try:
+        n = await asyncio.get_event_loop().run_in_executor(None, _sync)
+        if n:
+            logging.info("scheduled publisher: %d 件処理", n)
+    except Exception:
+        logging.exception("scheduled publisher 失敗")
+
+
 @asynccontextmanager
 async def lifespan(app_instance):
     TMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -41,9 +58,25 @@ async def lifespan(app_instance):
         init_db()
     except Exception:
         logging.exception("DB 初期化に失敗しました")
-    task = asyncio.create_task(cleanup_old_jobs())
+
+    cleanup_task = asyncio.create_task(cleanup_old_jobs())
+
+    # 予約投稿スケジューラ
+    scheduler = None
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        scheduler = AsyncIOScheduler()
+        scheduler.add_job(_run_due_posts_scheduled, "interval", minutes=1, id="run_due_posts")
+        scheduler.start()
+        logging.info("予約投稿スケジューラを起動しました (1 分間隔)")
+    except Exception:
+        logging.exception("スケジューラ起動に失敗しました（手動 cron でも代替可能）")
+
     yield
-    task.cancel()
+
+    cleanup_task.cancel()
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="Reel Creator API", lifespan=lifespan)
@@ -63,6 +96,7 @@ app.include_router(video.router)
 app.include_router(publish.router)
 app.include_router(posts.router)
 app.include_router(connections.router)
+app.include_router(cron.router)
 
 
 @app.get("/api/health")

@@ -121,12 +121,19 @@ def _publish_container(
     return data["id"]
 
 
-# ===== Phase 3: connection ベース投稿 + Meta OAuth =====
+# ===== Phase 3: Instagram Login flow + connection ベース投稿 =====
 
-META_DIALOG_OAUTH = "https://www.facebook.com/v21.0/dialog/oauth"
+# 新フロー（Instagram API with Instagram Login）:
+# - 認証: instagram.com の OAuth dialog（FB ページ経由不要）
+# - 投稿: graph.instagram.com のエンドポイント（graph.facebook.com ではない）
+
+INSTAGRAM_OAUTH_AUTHORIZE = "https://www.instagram.com/oauth/authorize"
+INSTAGRAM_OAUTH_TOKEN = "https://api.instagram.com/oauth/access_token"
+INSTAGRAM_GRAPH = "https://graph.instagram.com/v23.0"
+INSTAGRAM_GRAPH_ROOT = "https://graph.instagram.com"
 META_SCOPES = (
-    "instagram_basic,instagram_content_publish,"
-    "pages_show_list,business_management"
+    "instagram_business_basic,"
+    "instagram_business_content_publish"
 )
 
 
@@ -137,14 +144,14 @@ def publish_to_instagram_with(
     access_token: str,
     ig_account_id: str,
 ) -> dict:
-    """連携トークンを明示指定して Reels を投稿する。"""
+    """連携トークン (IG Login) を使って Reels を投稿する。"""
     try:
-        container_id = _create_container(
-            video_url, caption, access_token=access_token, account_id=ig_account_id
+        container_id = _ig_create_container(
+            video_url, caption, access_token=access_token, ig_user_id=ig_account_id
         )
-        _wait_for_container(container_id, access_token=access_token)
-        post_id = _publish_container(
-            container_id, access_token=access_token, account_id=ig_account_id
+        _ig_wait_for_container(container_id, access_token=access_token)
+        post_id = _ig_publish_container(
+            container_id, access_token=access_token, ig_user_id=ig_account_id
         )
         return {"success": True, "post_id": post_id, "message": "Instagram投稿完了"}
     except Exception as e:
@@ -155,7 +162,7 @@ def fetch_permalink(post_id: str, *, access_token: str) -> str | None:
     """投稿後の permalink を取得する（失敗時 None）。"""
     try:
         r = requests.get(
-            f"{GRAPH_API_BASE}/{post_id}",
+            f"{INSTAGRAM_GRAPH}/{post_id}",
             params={"fields": "permalink", "access_token": access_token},
             timeout=30,
         )
@@ -163,6 +170,58 @@ def fetch_permalink(post_id: str, *, access_token: str) -> str | None:
         return r.json().get("permalink")
     except Exception:
         return None
+
+
+def _ig_create_container(video_url, caption, *, access_token, ig_user_id):
+    resp = requests.post(
+        f"{INSTAGRAM_GRAPH}/{ig_user_id}/media",
+        data={
+            "media_type": "REELS",
+            "video_url": video_url,
+            "caption": caption,
+            "access_token": access_token,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "id" not in data:
+        raise RuntimeError(f"Container creation failed: {data}")
+    return data["id"]
+
+
+def _ig_wait_for_container(container_id, *, access_token, timeout=CONTAINER_TIMEOUT):
+    start = time.time()
+    while time.time() - start < timeout:
+        resp = requests.get(
+            f"{INSTAGRAM_GRAPH}/{container_id}",
+            params={"fields": "status_code", "access_token": access_token},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        status = resp.json().get("status_code")
+        if status == "FINISHED":
+            return
+        if status == "ERROR":
+            raise RuntimeError("Instagram container processing failed")
+        time.sleep(CONTAINER_POLL_INTERVAL)
+    raise RuntimeError("Instagram container processing timed out")
+
+
+def _ig_publish_container(container_id, *, access_token, ig_user_id):
+    resp = requests.post(
+        f"{INSTAGRAM_GRAPH}/{ig_user_id}/media_publish",
+        data={
+            "creation_id": container_id,
+            "access_token": access_token,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "id" not in data:
+        raise RuntimeError(f"Publishing failed: {data}")
+    return data["id"]
 
 
 def _meta_env() -> tuple[str, str, str]:
@@ -177,7 +236,7 @@ def _meta_env() -> tuple[str, str, str]:
 
 
 def build_meta_auth_url(state: str) -> str:
-    """Facebook Login 同意 URL を生成する。"""
+    """Instagram OAuth (Instagram Login) 同意 URL を生成する。"""
     from urllib.parse import urlencode
 
     cid, _, redirect = _meta_env()
@@ -190,72 +249,74 @@ def build_meta_auth_url(state: str) -> str:
             "scope": META_SCOPES,
         }
     )
-    return f"{META_DIALOG_OAUTH}?{params}"
+    return f"{INSTAGRAM_OAUTH_AUTHORIZE}?{params}"
 
 
 def exchange_meta_code(code: str) -> dict:
-    """認可コード → 長期 page token + IG ビジネスアカウント情報。"""
+    """認可コード → 長期 IG Business トークン + アカウント情報。"""
+    from datetime import datetime, timedelta, timezone
+
     cid, secret, redirect = _meta_env()
 
-    # 1) short-lived user token
-    r = requests.get(
-        f"{GRAPH_API_BASE}/oauth/access_token",
-        params={
+    # 1) 短期トークン（1 時間）
+    r = requests.post(
+        INSTAGRAM_OAUTH_TOKEN,
+        data={
             "client_id": cid,
             "client_secret": secret,
+            "grant_type": "authorization_code",
             "redirect_uri": redirect,
             "code": code,
         },
         timeout=30,
     )
     r.raise_for_status()
-    short_user = r.json()["access_token"]
+    body = r.json()
+    short_token = body["access_token"]
+    initial_user_id = str(body.get("user_id") or body.get("id") or "")
 
-    # 2) long-lived user token
+    # 2) 長期トークン（60 日）
     r = requests.get(
-        f"{GRAPH_API_BASE}/oauth/access_token",
+        f"{INSTAGRAM_GRAPH_ROOT}/access_token",
         params={
-            "grant_type": "fb_exchange_token",
-            "client_id": cid,
+            "grant_type": "ig_exchange_token",
             "client_secret": secret,
-            "fb_exchange_token": short_user,
+            "access_token": short_token,
         },
         timeout=30,
     )
     r.raise_for_status()
-    long_user = r.json()["access_token"]
-
-    # 3) pages
-    r = requests.get(
-        f"{GRAPH_API_BASE}/me/accounts",
-        params={"access_token": long_user},
-        timeout=30,
+    long_data = r.json()
+    long_token = long_data["access_token"]
+    expires_in = long_data.get("expires_in")
+    token_expires_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+        if expires_in else None
     )
-    r.raise_for_status()
-    pages = r.json().get("data", [])
 
-    # 4) find IG business account on a page
-    for p in pages:
-        ig_resp = requests.get(
-            f"{GRAPH_API_BASE}/{p['id']}",
-            params={
-                "fields": "instagram_business_account{id,username}",
-                "access_token": long_user,
-            },
+    # 3) ユーザー情報（username / 投稿 API で使う IG Business アカウント ID）
+    ig_user_id = initial_user_id
+    username = None
+    try:
+        me = requests.get(
+            f"{INSTAGRAM_GRAPH}/me",
+            params={"fields": "id,username,user_id", "access_token": long_token},
             timeout=30,
         )
-        if ig_resp.status_code != 200:
-            continue
-        ig = ig_resp.json().get("instagram_business_account")
-        if ig and ig.get("id"):
-            return {
-                "access_token": p["access_token"],  # 長期 page token（IG 投稿に使う）
-                "refresh_token": None,
-                "token_expires_at": None,
-                "external_account_id": ig["id"],
-                "account_name": ig.get("username") or p.get("name"),
-            }
+        if me.status_code == 200:
+            me_data = me.json()
+            ig_user_id = str(me_data.get("user_id") or me_data.get("id") or initial_user_id)
+            username = me_data.get("username")
+    except Exception:
+        pass
 
-    raise RuntimeError(
-        "Instagram ビジネスアカウントが連携された Facebook ページが見つかりません"
-    )
+    if not ig_user_id:
+        raise RuntimeError("Instagram ビジネスアカウントの ID を取得できませんでした")
+
+    return {
+        "access_token": long_token,
+        "refresh_token": None,
+        "token_expires_at": token_expires_at,
+        "external_account_id": ig_user_id,
+        "account_name": username,
+    }

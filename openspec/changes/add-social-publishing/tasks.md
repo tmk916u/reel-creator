@@ -71,17 +71,30 @@
 - [x] フロント: Instagram 接続ボタン（`/post/connections` に IG カード追加）
 - [x] テスト: instagram publish 成功（connection）/ env フォールバック / 未連携不可 / HTTPS 必須 / 失敗記録 / Meta callback 保存 → 9 件追加で全 45 件 pass
 - [x] ブラウザ検証: IG カード表示・接続ボタン → 未設定エラー表示
-- [ ] 実機: ngrok トンネルで公開 → IG Reels に今すぐ投稿して permalink 保存を確認（**要 Meta App + ngrok**、ユーザー対応待ち）
+- [x] 実機: ngrok トンネルで公開 → IG Reels に「今すぐ投稿」 → permalink 保存まで end-to-end 確認済み（@ichiki_kuukan に実投稿成功）
+
+> **Phase 3 実装中の補足**
+> - Meta が IG 投稿系を **Instagram Login flow（新方式）**に移行している。当初の Facebook Login + Graph API ベースの実装はユースケース「Instagramでメッセージとコンテンツを管理」では使えず、コードを書き換え:
+>   - 認証 URL: `https://www.instagram.com/oauth/authorize`（旧: facebook.com）
+>   - 投稿 API: `https://graph.instagram.com/v23.0/{ig_user_id}/{media|media_publish}`（旧: graph.facebook.com）
+>   - スコープ: `instagram_business_basic,instagram_business_content_publish`（旧: instagram_basic, instagram_content_publish, pages_show_list, business_management）
+> - Meta App は **Instagram 用に独自の App ID / Secret** を持つ。Facebook App ID（親）とは別物。`META_APP_ID/SECRET` には Instagram 側の値を使う
+> - 開発モードのアプリは IG アカウントを「アプリの役割 → Instagram テスター」として招待 → IG 側で承認、が必要
+> - ngrok-free は初回ブラウザアクセス時に警告ページを挟む（cookie で 2 回目以降スキップ）。OAuth callback も初回は警告を経由する
 
 ## Phase 4: 予約実行 + リトライ + 二重投稿防止 + 履歴
 
-- [ ] APScheduler をアプリ lifespan で 1 分間隔起動 → `publisher.run_due_posts()`
-- [ ] `publisher.run_due_posts()`: `status='scheduled' AND scheduled_at<=now()` を `FOR UPDATE SKIP LOCKED` で取得 → atomic claim → 投稿
-- [ ] `app/routers/cron.py`: `POST /api/cron/run`（`CRON_SECRET` 必須、手動/外部トリガー）
-- [ ] リトライ: `POST /api/posts/{post_id}/retry`（retry_count+1 → posting → 再投稿）
-- [ ] 投稿履歴: scheduled_posts の状態遷移を詳細画面に表示（status / posted_at / error_message / retry_count）
-- [ ] テスト: 二重投稿防止（同一 post を並行 claim → 1 回のみ投稿）/ due 取得 / リトライ
-- [ ] 実機: 予約日時到来で IG / YT に自動投稿されることを確認
+> **Phase 4 の補足**
+> - 二重投稿防止 / リトライ / 履歴表示は Phase 2 で先行実装済み（atomic claim 含む）。Phase 4 は APScheduler 統合と cron 手動トリガーのみ
+> - SQLite/Postgres 両対応のため `FOR UPDATE SKIP LOCKED` ではなく atomic `UPDATE ... WHERE status IN (...)` の rowcount チェックで claim を実現
+
+- [x] APScheduler をアプリ lifespan で 1 分間隔起動 → `publisher.run_due_posts()`（AsyncIOScheduler + thread pool で sync job を実行）
+- [x] `publisher.run_due_posts()`: `status='scheduled' AND scheduled_at<=now()` を取得 → atomic claim（`UPDATE ... WHERE status IN ('scheduled','failed') RETURNING`）→ 投稿（Phase 2 で実装済み）
+- [x] `app/routers/cron.py`: `POST /api/cron/run`（`X-Cron-Secret` ヘッダ必須、手動/外部トリガー）
+- [x] リトライ: `POST /api/posts/{post_id}/retry`（retry_count+1 → posting → 再投稿）（Phase 2 で実装済み）
+- [x] 投稿履歴: scheduled_posts の状態遷移を詳細画面に表示（status / posted_at / error_message / retry_count）（Phase 1 で実装済み）
+- [x] テスト: 二重投稿防止（claim 冪等性）/ cron secret 認証 / cron が run_due_posts を呼ぶ → 5 件追加で全 50 件 pass
+- [x] 実機: 過去日時の scheduled_post を仕込み → cron 手動トリガーで自動投稿（連携未設定の YT 側で failed として記録され、cron が due post を拾うフローを確認）
 
 ## Phase 5: 仕上げ + commit
 
