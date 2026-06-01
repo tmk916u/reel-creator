@@ -229,3 +229,83 @@ def test_delete(ctx):
     vid = _make_video(ctx)
     assert ctx.client.delete(f"/api/posts/{vid}").status_code == 204
     assert ctx.client.get(f"/api/posts/{vid}").status_code == 404
+
+
+# --- AI caption suggest (add-ai-caption-suggest) ---
+
+def test_suggest_video_not_found(ctx):
+    resp = ctx.client.post(f"/api/posts/{uuid.uuid4()}/suggest", json={})
+    assert resp.status_code == 404
+
+
+def test_suggest_success(ctx, monkeypatch):
+    from app.routers import posts as posts_mod
+    from app.services.captions_ai import CaptionsResult
+
+    vid = _make_video(ctx)
+
+    def fake_suggest(video_id, theme=None):
+        return CaptionsResult(
+            instagram_caption="生成された IG",
+            youtube_title="生成されたタイトル",
+            youtube_description="生成された説明",
+            hashtags=["#a", "#b", "#c", "#d", "#e"],
+            cover_text_candidates=["案1", "案2", "案3"],
+        )
+    monkeypatch.setattr(posts_mod, "suggest_captions", fake_suggest)
+
+    resp = ctx.client.post(f"/api/posts/{vid}/suggest", json={"theme": "ダイエット"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["instagram_caption"] == "生成された IG"
+    assert body["youtube_title"] == "生成されたタイトル"
+    assert body["hashtags"] == ["#a", "#b", "#c", "#d", "#e"]
+    assert body["cover_text_candidates"] == ["案1", "案2", "案3"]
+
+
+def test_suggest_transcribe_error_returns_422(ctx, monkeypatch):
+    from app.routers import posts as posts_mod
+    from app.services.captions_ai import TranscribeError
+
+    vid = _make_video(ctx)
+    def raise_(video_id, theme=None):
+        raise TranscribeError("音声抽出失敗")
+    monkeypatch.setattr(posts_mod, "suggest_captions", raise_)
+
+    resp = ctx.client.post(f"/api/posts/{vid}/suggest", json={})
+    assert resp.status_code == 422
+    assert "書き起こし" in resp.json()["detail"]
+
+
+def test_suggest_llm_error_returns_502(ctx, monkeypatch):
+    from app.routers import posts as posts_mod
+    from app.services.captions_ai import LLMError
+
+    vid = _make_video(ctx)
+    def raise_(video_id, theme=None):
+        raise LLMError("API rate limit")
+    monkeypatch.setattr(posts_mod, "suggest_captions", raise_)
+
+    resp = ctx.client.post(f"/api/posts/{vid}/suggest", json={})
+    assert resp.status_code == 502
+    assert "AI" in resp.json()["detail"]
+
+
+def test_suggest_without_theme(ctx, monkeypatch):
+    """theme フィールド省略でも動く。"""
+    from app.routers import posts as posts_mod
+    from app.services.captions_ai import CaptionsResult
+
+    vid = _make_video(ctx)
+    captured = {}
+    def fake_suggest(video_id, theme=None):
+        captured["theme"] = theme
+        return CaptionsResult(
+            instagram_caption="x", youtube_title="y", youtube_description="z",
+            hashtags=[], cover_text_candidates=[],
+        )
+    monkeypatch.setattr(posts_mod, "suggest_captions", fake_suggest)
+
+    resp = ctx.client.post(f"/api/posts/{vid}/suggest", json={})
+    assert resp.status_code == 200
+    assert captured["theme"] is None

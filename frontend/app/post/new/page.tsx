@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import {
   uploadPostVideo,
   createPost,
+  suggestCaptions,
   postMediaUrl,
   type UploadVideoResult,
   type PrivacyStatus,
@@ -34,6 +35,38 @@ export default function NewPostPage() {
   const [ytDesc, setYtDesc] = useState("");
   const [ytAt, setYtAt] = useState("");
   const [privacy, setPrivacy] = useState<PrivacyStatus>("public");
+
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiCovers, setAiCovers] = useState<string[]>([]);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+  const handleSuggest = async () => {
+    if (!uploaded) return;
+    setAiBusy(true);
+    setError(null);
+    try {
+      const r = await suggestCaptions(uploaded.video_id, theme || undefined);
+      setIgCaption(r.instagram_caption);
+      setYtTitle(r.youtube_title);
+      setYtDesc(r.youtube_description);
+      setHashtags(r.hashtags.join(" "));
+      setAiCovers(r.cover_text_candidates);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "AI 生成に失敗しました");
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const copyCover = async (text: string, index: number) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedIndex(index);
+      setTimeout(() => setCopiedIndex(null), 1500);
+    } catch {
+      // クリップボード API が無効な環境では何もしない
+    }
+  };
 
   const handleUpload = async (file: File) => {
     setUploading(true);
@@ -131,6 +164,27 @@ export default function NewPostPage() {
 
       {uploaded && (
         <>
+          {/* AI キャプション生成 */}
+          <section className="mb-6 rounded-xl border border-purple-500/30 bg-purple-600/10 p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="mb-1 text-sm font-semibold text-purple-200">
+                  ✨ AI キャプション生成
+                </h2>
+                <p className="text-xs text-purple-300/80">
+                  音声から自動でキャプション・タイトル・説明文・ハッシュタグ・カバー文字案を生成します（30〜60 秒）
+                </p>
+              </div>
+              <button
+                onClick={handleSuggest}
+                disabled={aiBusy}
+                className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold hover:bg-purple-500 disabled:opacity-50"
+              >
+                {aiBusy ? "生成中…" : aiCovers.length > 0 ? "再生成" : "AI で生成"}
+              </button>
+            </div>
+          </section>
+
           {/* 2. テーマ・メモ */}
           <section className="mb-6 rounded-xl border border-gray-800 bg-gray-900/50 p-5">
             <h2 className="mb-3 text-sm font-semibold text-gray-300">
@@ -244,6 +298,31 @@ export default function NewPostPage() {
               </div>
             )}
           </section>
+
+          {aiCovers.length > 0 && (
+            <section className="mb-6 rounded-xl border border-gray-800 bg-gray-900/50 p-5">
+              <h2 className="mb-1 text-sm font-semibold text-gray-300">
+                📌 カバー文字案（AI）
+              </h2>
+              <p className="mb-3 text-xs text-gray-500">
+                リール冒頭のテキストオーバーレイ用。コピーして TikTok / Edits 等で動画に合成してください。
+              </p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {aiCovers.map((text, i) => (
+                  <button
+                    key={i}
+                    onClick={() => copyCover(text, i)}
+                    className="rounded-lg border border-gray-700 bg-gray-900 p-3 text-left text-sm hover:border-purple-500/60"
+                  >
+                    <div className="mb-1 text-xs text-gray-500">
+                      案 {i + 1} {copiedIndex === i && "✓ コピーしました"}
+                    </div>
+                    <div className="font-semibold text-gray-100">{text}</div>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
 
           <button
             onClick={handleSave}

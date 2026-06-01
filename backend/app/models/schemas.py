@@ -285,3 +285,17 @@ class ConnectionOut(BaseModel):
     is_active: bool
     token_expires_at: datetime | None = None
     created_at: datetime
+
+
+# --- AI キャプション生成 (add-ai-caption-suggest) ---
+
+class CaptionSuggestionRequest(BaseModel):
+    theme: str | None = None
+
+
+class CaptionSuggestionResponse(BaseModel):
+    instagram_caption: str
+    youtube_title: str
+    youtube_description: str
+    hashtags: list[str] = []
+    cover_text_candidates: list[str] = []

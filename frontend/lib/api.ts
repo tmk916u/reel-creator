@@ -426,3 +426,26 @@ export async function disconnect(id: string): Promise<void> {
   if (!res.ok && res.status !== 204)
     await throwApiError(res, "連携解除に失敗しました");
 }
+
+// --- AI キャプション生成 (add-ai-caption-suggest) ---
+
+export interface CaptionSuggestion {
+  instagram_caption: string;
+  youtube_title: string;
+  youtube_description: string;
+  hashtags: string[];
+  cover_text_candidates: string[];
+}
+
+export async function suggestCaptions(
+  videoId: string,
+  theme?: string,
+): Promise<CaptionSuggestion> {
+  const res = await fetch(`${API_URL}/api/posts/${videoId}/suggest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ theme: theme || null }),
+  });
+  if (!res.ok) await throwApiError(res, "AI 生成に失敗しました");
+  return res.json();
+}

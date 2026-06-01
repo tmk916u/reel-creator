@@ -16,6 +16,8 @@ from app import config
 from app.db import get_db
 from app.models.db_models import ScheduledPost, Video
 from app.models.schemas import (
+    CaptionSuggestionRequest,
+    CaptionSuggestionResponse,
     PostCreate,
     PostOut,
     PostUpdate,
@@ -23,6 +25,7 @@ from app.models.schemas import (
     UploadVideoResponse,
 )
 from app.services import publisher, storage
+from app.services.captions_ai import LLMError, TranscribeError, suggest_captions
 from app.services.hashtags import normalize_hashtags
 
 router = APIRouter(prefix="/api/posts", tags=["posts"])
@@ -233,3 +236,27 @@ def retry_post(post_id: uuid.UUID, db: Session = Depends(get_db)):
     post.retry_count += 1
     db.commit()
     return publisher.publish_post(db, post_id)
+
+
+@router.post("/{video_id}/suggest", response_model=CaptionSuggestionResponse)
+def suggest_captions_endpoint(
+    video_id: uuid.UUID,
+    payload: CaptionSuggestionRequest = CaptionSuggestionRequest(),
+    db: Session = Depends(get_db),
+):
+    """書き起こし + LLM で投稿用テキスト一式を生成する（add-ai-caption-suggest）。"""
+    if db.get(Video, video_id) is None:
+        raise HTTPException(404, "動画が見つかりません")
+    try:
+        result = suggest_captions(str(video_id), theme=payload.theme)
+    except TranscribeError as e:
+        raise HTTPException(422, f"書き起こしに失敗しました: {e}")
+    except LLMError as e:
+        raise HTTPException(502, f"AI 生成に失敗しました: {e}")
+    return CaptionSuggestionResponse(
+        instagram_caption=result.instagram_caption,
+        youtube_title=result.youtube_title,
+        youtube_description=result.youtube_description,
+        hashtags=result.hashtags,
+        cover_text_candidates=result.cover_text_candidates,
+    )
