@@ -39,7 +39,7 @@ from app.models.schemas import (
 from app.services.ffmpeg import (
     get_video_duration, extract_audio, detect_silence, cut_and_concat, burn_subtitles,
     overlay_hook_text, overlay_cta_text, overlay_topic_numbers, mix_bgm, mix_sfx_at_cuts,
-    apply_pipeline_combined,
+    apply_pipeline_combined, resolve_lut_path,
 )
 from app.services.silence import (
     compute_voice_segments,
@@ -959,6 +959,11 @@ def _run_processing(job_id: str, settings: ProcessRequest):
         # ため apply_pipeline_combined を必ず呼ぶ（公開可能品質 -14 LUFS 担保）。
         output_path = job_dir / "output.mp4"
         job.update({"stage": "render", "progress": 90, "message": "演出と音量を統合適用中..."})
+        color_grade_lut_str = resolve_lut_path(
+            settings.color_grade.value, Path("/app/app/data/luts")
+        )
+        if settings.color_grade.value != "none" and color_grade_lut_str is None:
+            jump_cut_notes.append(f"カラーグレードLUT未配置（{settings.color_grade.value}）")
         try:
             apply_pipeline_combined(
                 cut_output, str(output_path), job_dir,
@@ -971,6 +976,7 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 sfx_path=sfx_path_str,
                 sfx_timestamps_sec=sfx_timestamps_list,
                 topic_style=settings.topic_style,
+                color_grade_lut=color_grade_lut_str,
             )
             final_output = str(output_path)
         except Exception as e:

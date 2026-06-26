@@ -689,6 +689,33 @@ def _topic_style_config(style: str) -> dict:
     }
 
 
+LUT_FILES: dict[str, str] = {
+    "minimal": "minimal.cube",
+    "cinematic": "cinematic.cube",
+    "monochrome": "monochrome.cube",
+    "pop": "pop.cube",
+}
+
+
+def resolve_lut_path(color_grade: str, base_dir: Path) -> str | None:
+    """color_grade テイスト名を base_dir 配下の .cube パスに解決する。
+
+    none / 未知のテイスト / ファイル非存在 はいずれも None（=グレーディング無効）。
+    """
+    filename = LUT_FILES.get(str(color_grade))
+    if not filename:
+        return None
+    path = base_dir / filename
+    return str(path) if path.exists() else None
+
+
+def _build_color_grade_filter(lut_path: str | None) -> str | None:
+    """解決済み LUT パスから lut3d フィルタ文字列を作る。None なら無効。"""
+    if not lut_path:
+        return None
+    return f"lut3d=file={lut_path}"
+
+
 def apply_pipeline_combined(
     input_video: str,
     output_video: str,
@@ -712,6 +739,7 @@ def apply_pipeline_combined(
     sfx_timestamps_sec: list[float] | None = None,
     sfx_volume: float = 0.15,
     topic_style: str = "default",  # default | sleek | clean
+    color_grade_lut: str | None = None,  # 解決済み .cube パス。None でグレーディング無効
     apply_loudnorm: bool = True,
     loudnorm_i: float = -14.0,  # IG/TikTok Reels 推奨値（EBU R128）
     loudnorm_tp: float = -1.0,
@@ -728,6 +756,12 @@ def apply_pipeline_combined(
 
     # ====== 映像フィルタチェーン構築 ======
     video_filters: list[str] = []
+
+    # カラーグレード(lut3d)はチェーン先頭=最初に適用する。これにより素の映像だけが
+    # グレーディングされ、後段の字幕・テロップ(drawtext)の色は影響を受けない。
+    grade_filter = _build_color_grade_filter(color_grade_lut)
+    if grade_filter:
+        video_filters.append(grade_filter)
 
     if subtitle_file:
         if subtitle_file.lower().endswith(".ass"):

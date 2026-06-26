@@ -41,6 +41,7 @@ export interface ProcessSettings {
   font_size: "small" | "medium" | "large";
   subtitle_position: "bottom" | "center";
   subtitle_color: "white" | "yellow";
+  color_grade?: "none" | "minimal" | "cinematic" | "monochrome" | "pop";
 }
 
 export interface ProgressEvent {

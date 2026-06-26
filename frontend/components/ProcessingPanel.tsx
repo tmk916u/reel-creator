@@ -25,6 +25,7 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     font_size: "medium",
     subtitle_position: "bottom",
     subtitle_color: "white",
+    color_grade: "minimal",
   },
   entertainment: {
     enable_subtitles: true,
@@ -38,6 +39,7 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     font_size: "large",
     subtitle_position: "bottom",
     subtitle_color: "yellow",
+    color_grade: "pop",
   },
   tight: {
     enable_subtitles: true,
@@ -57,6 +59,7 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     font_size: "large",
     subtitle_position: "bottom",
     subtitle_color: "yellow",
+    color_grade: "pop",
   },
   news: {
     enable_subtitles: true,
@@ -70,6 +73,7 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
     font_size: "medium",
     subtitle_position: "bottom",
     subtitle_color: "white",
+    color_grade: "none",
   },
 };
 
@@ -97,6 +101,7 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
     font_size: "medium",
     subtitle_position: "bottom",
     subtitle_color: "white",
+    color_grade: "none",
     // ⚡ぎっしりプリセットの設定をマージ (初期適用)
     ...PRESETS.tight,
   });
@@ -486,6 +491,37 @@ export default function ProcessingPanel({ duration, previewUrl, onStart }: Props
             </p>
           </div>
         )}
+
+        {/* カラーグレード（テイスト別の色味・常時適用） */}
+        <div>
+          <label className="block text-sm text-gray-300 mb-2">
+            🎞️ カラーグレード（色味）
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              ["none", "なし"],
+              ["minimal", "🤍 ミニマル"],
+              ["cinematic", "🎬 シネマ"],
+              ["monochrome", "◼️ モノトーン"],
+              ["pop", "🌈 ポップ"],
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setSettings((s) => ({ ...s, color_grade: key }))}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  (settings.color_grade ?? "none") === key
+                    ? "bg-purple-500 text-white"
+                    : "bg-gray-700 text-gray-300 hover:bg-gray-600"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            映像全体のトーンを統一（字幕・テロップの色は変わりません）
+          </p>
+        </div>
 
         {/* トピックテロップのスタイル */}
         <div>

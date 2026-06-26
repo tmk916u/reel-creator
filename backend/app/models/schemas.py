@@ -30,6 +30,14 @@ class SubtitleColor(str, Enum):
     YELLOW = "yellow"
 
 
+class ColorGrade(str, Enum):
+    NONE = "none"
+    MINIMAL = "minimal"
+    CINEMATIC = "cinematic"
+    MONOCHROME = "monochrome"
+    POP = "pop"
+
+
 class EditedSegment(BaseModel):
     start: float
     end: float
@@ -66,6 +74,7 @@ class ProcessRequest(BaseModel):
     font_size: FontSize = FontSize.MEDIUM
     subtitle_position: SubtitlePosition = SubtitlePosition.BOTTOM
     subtitle_color: SubtitleColor = SubtitleColor.WHITE
+    color_grade: ColorGrade = ColorGrade.NONE  # テイスト別カラーグレード(LUT)。none で従来同一
     edited_segments: list[EditedSegment] | None = None  # プレビュー編集後の字幕
 
 
