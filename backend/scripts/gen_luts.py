@@ -38,35 +38,46 @@ def _saturate(r: float, g: float, b: float, sat: float) -> tuple[float, float, f
     )
 
 
+def _lift(x: float, amount: float) -> float:
+    # 黒を持ち上げてマット/フィルム調にする（0..1 を amount..1 に圧縮）
+    return _clamp(amount + x * (1.0 - amount))
+
+
 def t_minimal(r: float, g: float, b: float) -> tuple[float, float, float]:
-    # 軽いコントラスト + わずかな彩度低下。雑誌風の落ち着き。
-    r, g, b = _contrast(r, 1.06), _contrast(g, 1.06), _contrast(b, 1.06)
-    return _saturate(r, g, b, 0.92)
+    # エディトリアル: しっかりコントラスト + 彩度をかなり落とし + 黒を少し持ち上げて
+    # マットに + ごく薄い寒色。雑誌のモノトーン特集のような洗練。
+    r, g, b = _contrast(r, 1.14), _contrast(g, 1.14), _contrast(b, 1.14)
+    r, g, b = _saturate(r, g, b, 0.78)
+    r, g, b = _lift(r, 0.03), _lift(g, 0.03), _lift(b, 0.045)  # 影をわずかに寒色マット
+    return r, g, b
 
 
 def t_cinematic(r: float, g: float, b: float) -> tuple[float, float, float]:
-    # ティール&オレンジ: シャドウを青緑へ、ハイライトをオレンジへ。
+    # ティール&オレンジ（強め）: シャドウを青緑、ハイライトをオレンジへはっきり振る。
     l = _luma(r, g, b)
-    r, g, b = _contrast(r, 1.12), _contrast(g, 1.10), _contrast(b, 1.12)
+    r, g, b = _contrast(r, 1.20), _contrast(g, 1.16), _contrast(b, 1.20)
     hi = l * l            # ハイライト重み
     sh = (1.0 - l) ** 2   # シャドウ重み
-    r = _clamp(r + 0.06 * hi - 0.02 * sh)
-    g = _clamp(g + 0.015 * hi + 0.015 * sh)
-    b = _clamp(b - 0.05 * hi + 0.07 * sh)
-    return _saturate(r, g, b, 1.05)
+    r = _clamp(r + 0.13 * hi - 0.05 * sh)
+    g = _clamp(g + 0.02 * hi + 0.03 * sh)
+    b = _clamp(b - 0.10 * hi + 0.14 * sh)
+    r, g, b = _saturate(r, g, b, 1.12)
+    r, g, b = _lift(r, 0.025), _lift(g, 0.03), _lift(b, 0.04)  # シャドウにティールのマット
+    return r, g, b
 
 
 def t_monochrome(r: float, g: float, b: float) -> tuple[float, float, float]:
-    # 彩度0のグレースケール + わずかな暖色ティント + 軽いコントラスト。
-    l = _contrast(_luma(r, g, b), 1.08)
-    return _clamp(l * 1.03), _clamp(l), _clamp(l * 0.97)
+    # 彩度0 + 強めコントラストでメリハリ + わずかな暖色ティント（セピア寄り）。
+    l = _contrast(_luma(r, g, b), 1.18)
+    l = _lift(l, 0.02)
+    return _clamp(l * 1.06), _clamp(l), _clamp(l * 0.92)
 
 
 def t_pop(r: float, g: float, b: float) -> tuple[float, float, float]:
-    # 彩度・明度ブースト。SNS 映えの元気め。
-    r, g, b = _contrast(r, 1.08), _contrast(g, 1.08), _contrast(b, 1.08)
-    r, g, b = _saturate(r, g, b, 1.28)
-    return _clamp(r + 0.02), _clamp(g + 0.02), _clamp(b + 0.02)
+    # 彩度・明度を大きくブースト。SNS 映えのビビッド。
+    r, g, b = _contrast(r, 1.14), _contrast(g, 1.14), _contrast(b, 1.14)
+    r, g, b = _saturate(r, g, b, 1.45)
+    return _clamp(r + 0.03), _clamp(g + 0.03), _clamp(b + 0.03)
 
 
 TASTES = {
