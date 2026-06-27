@@ -42,6 +42,7 @@ from app.services.ffmpeg import (
     apply_pipeline_combined, resolve_lut_path,
 )
 from app.services.reframe import compute_reframe_windows
+from app.services.analyze import analyze_video
 from app.services.silence import (
     compute_voice_segments,
     protect_words_from_silences,
@@ -199,6 +200,24 @@ async def upload_video(file: UploadFile = File(...)):
         duration=round(duration, 2),
         file_size=file_size,
     )
+
+
+@router.post("/analyze/{job_id}")
+def analyze_job(job_id: str):
+    """おまかせ: 入力動画を解析し、種類に応じた推奨設定を返す。
+
+    発話量(Silero VAD)と向き(横/縦)から profile(talk/visual/mixed)を判定し、
+    ProcessRequest の推奨上書きを {label, reason, settings, ...} で返す。
+    フロントはこれを設定に適用してから /process を呼ぶ。
+    """
+    job_dir = TMP_DIR / job_id
+    if not job_dir.exists():
+        raise HTTPException(404, "Job not found")
+    input_path = str(job_dir / "input.mp4")
+    audio_path = str(job_dir / "audio.wav")
+    if not Path(audio_path).exists():
+        extract_audio(input_path, audio_path)
+    return analyze_video(input_path, audio_path)
 
 
 @router.post("/transcribe/{job_id}", response_model=TranscribeResponse)

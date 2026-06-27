@@ -15,6 +15,24 @@ export interface TranscriptSegment {
   suspicious?: boolean; // 誤認識候補なら true (赤字ハイライト用)
 }
 
+export interface AnalyzeResult {
+  profile: "talk" | "visual" | "mixed";
+  label: string;
+  reason: string;
+  speech_ratio: number;
+  orientation: "vertical" | "landscape";
+  settings: Partial<ProcessSettings>;
+}
+
+export async function analyzeVideo(jobId: string): Promise<AnalyzeResult> {
+  const res = await fetch(`${API_URL}/api/analyze/${jobId}`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "解析に失敗しました");
+  }
+  return res.json();
+}
+
 export interface ProcessSettings {
   silence_threshold: number;
   min_silence_duration: number;

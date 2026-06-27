@@ -2,9 +2,10 @@
 "use client";
 
 import { useState } from "react";
-import type { ProcessSettings } from "@/lib/api";
+import { analyzeVideo, type AnalyzeResult, type ProcessSettings } from "@/lib/api";
 
 interface Props {
+  jobId: string;
   duration: number;
   previewUrl: string;
   onStart: (settings: ProcessSettings) => void;
@@ -82,6 +83,7 @@ const PRESETS: Record<Exclude<Preset, "custom">, Partial<ProcessSettings>> = {
 };
 
 export default function ProcessingPanel({
+  jobId,
   duration,
   previewUrl,
   onStart,
@@ -123,6 +125,25 @@ export default function ProcessingPanel({
     setSettings((s) => ({ ...s, ...PRESETS[p] }));
   };
 
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
+  const [analyzeError, setAnalyzeError] = useState("");
+
+  const handleAuto = async () => {
+    setAnalyzing(true);
+    setAnalyzeError("");
+    try {
+      const r = await analyzeVideo(jobId);
+      setAnalysis(r);
+      setPreset("custom");
+      setSettings((s) => ({ ...s, ...r.settings }));
+    } catch (e) {
+      setAnalyzeError(e instanceof Error ? e.message : "解析に失敗しました");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* プレビュー */}
@@ -137,6 +158,40 @@ export default function ProcessingPanel({
       {/* 設定 */}
       <div className="bg-gray-800 rounded-xl p-6 space-y-5">
         <h3 className="text-lg font-semibold">処理設定</h3>
+
+        {/* ✨ おまかせ（自動判定） */}
+        <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-amber-200">
+                ✨ おまかせ（自動判定）
+              </div>
+              <div className="text-xs text-gray-400 mt-0.5">
+                動画の中身を解析して最適な設定を自動でセット
+              </div>
+            </div>
+            <button
+              onClick={handleAuto}
+              disabled={analyzing || !jobId}
+              className="shrink-0 px-4 py-2 rounded-lg text-sm font-medium bg-amber-500 text-white hover:bg-amber-400 disabled:opacity-50 transition-colors"
+            >
+              {analyzing ? "解析中..." : "おまかせ設定"}
+            </button>
+          </div>
+          {analysis && (
+            <div className="mt-2 text-xs text-amber-100 bg-black/20 rounded p-2">
+              <span className="font-semibold">判定: {analysis.label}</span>
+              <span className="text-gray-300">
+                （発話 {Math.round(analysis.speech_ratio * 100)}% /{" "}
+                {analysis.orientation === "vertical" ? "縦" : "横"}）
+              </span>
+              <div className="text-gray-300 mt-1">{analysis.reason}</div>
+            </div>
+          )}
+          {analyzeError && (
+            <div className="mt-2 text-xs text-red-300">{analyzeError}</div>
+          )}
+        </div>
 
         {/* プリセット */}
         <div>

@@ -254,6 +254,7 @@ export default function Home() {
             {step === "upload" && <VideoUploader onUploaded={handleUploaded} />}
             {step === "settings" && (
               <ProcessingPanel
+                jobId={jobId}
                 duration={duration}
                 previewUrl={previewUrl}
                 onStart={handleStartProcessing}
