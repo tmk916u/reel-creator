@@ -1,0 +1,7 @@
+node_modules/
+renders/
+snapshots/
+# index.html は template.tmpl + brief.json から生成される成果物
+index.html
+# footage はレンダー入力（per-video）。差し替え前提なので追跡しない
+footage.mp4

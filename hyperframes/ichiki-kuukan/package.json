@@ -1,0 +1,13 @@
+{
+  "name": "reel",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs && npx --yes hyperframes@0.7.14 preview",
+    "check": "node build.mjs && npx --yes hyperframes@0.7.14 lint",
+    "snapshot": "node build.mjs && npx --yes hyperframes@0.7.14 snapshot --describe false",
+    "render": "node build.mjs && npx --yes hyperframes@0.7.14 render",
+    "publish": "npx --yes hyperframes@0.7.14 publish"
+  }
+}

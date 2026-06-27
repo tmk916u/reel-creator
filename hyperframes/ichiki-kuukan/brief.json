@@ -1,0 +1,19 @@
+{
+  "_comment": "このファイルを編集して `npm run build` → `npm run render`。phrase は <em>…</em> でアクセント色、<br> で改行。",
+  "footage": "footage.mp4",
+  "colors": {
+    "ivory": "#f4ede0",
+    "accent": "#e9d9b6",
+    "rule": "#cbb88f",
+    "romaji_color": "#d9cfbf",
+    "bg": "#0a0a0a"
+  },
+  "copy": {
+    "wordmark": "一木空間",
+    "romaji": "ICHIKI　KUUKAN",
+    "phrase1": "ととのう、<br />という<em>時間</em>。",
+    "phrase2": "身体と、空間と、<br /><em>呼吸</em>と。",
+    "kicker": "SPACE &amp; BODYWORK",
+    "handle": "@ichiki_kuukan"
+  }
+}
