@@ -2,7 +2,12 @@
 "use client";
 
 import { useState } from "react";
-import { analyzeVideo, type AnalyzeResult, type ProcessSettings } from "@/lib/api";
+import {
+  analyzeVideo,
+  gradePreviewUrl,
+  type AnalyzeResult,
+  type ProcessSettings,
+} from "@/lib/api";
 
 interface Props {
   jobId: string;
@@ -626,24 +631,51 @@ export default function ProcessingPanel({
                     ["monochrome", "◼️ モノトーン"],
                     ["pop", "🌈 ポップ"],
                   ] as const
-                ).map(([key, label]) => (
-                  <button
-                    key={key}
-                    onClick={() =>
-                      setSettings((s) => ({ ...s, color_grade: key }))
-                    }
-                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      (settings.color_grade ?? "none") === key
-                        ? "bg-purple-500 text-white"
-                        : "bg-gray-700 text-gray-300 hover:bg-gray-600"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
+                ).map(([key, label]) => {
+                  const selected = (settings.color_grade ?? "none") === key;
+                  return (
+                    <button
+                      key={key}
+                      onClick={() =>
+                        setSettings((s) => ({ ...s, color_grade: key }))
+                      }
+                      className={`overflow-hidden rounded-lg border-2 transition-colors ${
+                        selected
+                          ? "border-purple-500"
+                          : "border-transparent hover:border-gray-600"
+                      }`}
+                    >
+                      <div className="relative aspect-[9/16] bg-gray-700">
+                        {jobId && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={gradePreviewUrl(jobId, key)}
+                            alt={label}
+                            loading="lazy"
+                            className="h-full w-full object-cover"
+                            onError={(e) => {
+                              (
+                                e.currentTarget as HTMLImageElement
+                              ).style.visibility = "hidden";
+                            }}
+                          />
+                        )}
+                      </div>
+                      <div
+                        className={`px-1 py-1 text-center text-xs font-medium ${
+                          selected
+                            ? "bg-purple-500 text-white"
+                            : "bg-gray-700 text-gray-300"
+                        }`}
+                      >
+                        {label}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
               <p className="text-xs text-gray-500 mt-1">
-                映像全体のトーンを統一（字幕・テロップの色は変わりません）
+                あなたの動画で色味を見比べて選べます（字幕・テロップの色は変わりません）
               </p>
             </div>
 

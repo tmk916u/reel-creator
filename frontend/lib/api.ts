@@ -25,7 +25,9 @@ export interface AnalyzeResult {
 }
 
 export async function analyzeVideo(jobId: string): Promise<AnalyzeResult> {
-  const res = await fetch(`${API_URL}/api/analyze/${jobId}`, { method: "POST" });
+  const res = await fetch(`${API_URL}/api/analyze/${jobId}`, {
+    method: "POST",
+  });
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.detail || "解析に失敗しました");
@@ -168,6 +170,10 @@ export async function getResult(jobId: string): Promise<JobResult> {
 
 export function getDownloadUrl(jobId: string): string {
   return `${API_URL}/api/download/${jobId}`;
+}
+
+export function gradePreviewUrl(jobId: string, grade: string): string {
+  return `${API_URL}/api/preview/${jobId}/grade/${grade}`;
 }
 
 export interface CaptionsResult {

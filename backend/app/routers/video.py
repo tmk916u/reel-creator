@@ -39,7 +39,7 @@ from app.models.schemas import (
 from app.services.ffmpeg import (
     get_video_duration, extract_audio, detect_silence, cut_and_concat, burn_subtitles,
     overlay_hook_text, overlay_cta_text, overlay_topic_numbers, mix_bgm, mix_sfx_at_cuts,
-    apply_pipeline_combined, resolve_lut_path,
+    apply_pipeline_combined, resolve_lut_path, extract_grade_preview,
 )
 from app.services.reframe import compute_reframe_windows
 from app.services.analyze import analyze_video
@@ -1137,6 +1137,47 @@ async def download_video(job_id: str):
         media_type="video/mp4",
         filename=f"reel_{job_id[:8]}.mp4",
     )
+
+
+_PREVIEW_GRADES = ("none", "minimal", "cinematic", "monochrome", "pop")
+
+
+@router.get("/preview/{job_id}/grade/{grade}")
+def preview_grade(job_id: str, grade: str):
+    """入力動画の代表フレームに各カラーグレード(LUT)を適用したサムネイルを返す。
+
+    テイスト選択前に、ユーザー自身の映像で色味を見比べるためのプレビュー。
+    job_dir/preview_{grade}.jpg にキャッシュし、再リクエストは即返す。
+    """
+    if grade not in _PREVIEW_GRADES:
+        raise HTTPException(404, f"未知のテイスト: {grade}")
+
+    job_dir = TMP_DIR / job_id
+    input_path = job_dir / "input.mp4"
+    if not input_path.exists():
+        raise HTTPException(404, "アップロード動画が見つかりません")
+
+    cache_path = job_dir / f"preview_{grade}.jpg"
+    if not cache_path.exists():
+        try:
+            duration = get_video_duration(str(input_path))
+        except RuntimeError:
+            duration = 0.0
+        # 黒い導入フレームを避けるため尺の 40% 付近を代表フレームにする
+        timestamp = min(max(duration * 0.4, 0.0), max(duration - 0.1, 0.0))
+        lut_path = (
+            None if grade == "none"
+            else resolve_lut_path(grade, Path("/app/app/data/luts"))
+        )
+        try:
+            extract_grade_preview(
+                str(input_path), str(cache_path),
+                lut_path=lut_path, timestamp=timestamp,
+            )
+        except RuntimeError as e:
+            raise HTTPException(500, f"プレビュー生成に失敗しました: {e}")
+
+    return FileResponse(str(cache_path), media_type="image/jpeg")
 
 
 def _get_cached_transcript(job_id: str) -> str:

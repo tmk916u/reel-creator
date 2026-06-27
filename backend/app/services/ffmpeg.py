@@ -741,6 +741,47 @@ def _build_color_grade_filter(lut_path: str | None) -> str | None:
     return f"lut3d=file={lut_path}"
 
 
+def build_preview_vf(lut_path: str | None, width: int) -> str:
+    """テイストプレビュー用の -vf 文字列を作る（純粋関数）。
+
+    lut_path があれば lut3d を先頭に挟み、最後に width 基準で縮小する。
+    width は偶数化のため scale={width}:-2。
+    """
+    parts: list[str] = []
+    if lut_path:
+        parts.append(f"lut3d=file={lut_path}")
+    parts.append(f"scale={int(width)}:-2")
+    return ",".join(parts)
+
+
+def extract_grade_preview(
+    input_path: str,
+    output_path: str,
+    *,
+    lut_path: str | None,
+    timestamp: float,
+    width: int = 360,
+) -> str:
+    """input 動画の timestamp 位置の 1 フレームに LUT を適用して JPEG 出力する。
+
+    プレビュー用途のため軽量・縮小。失敗時は RuntimeError。
+    """
+    vf = build_preview_vf(lut_path, width)
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", f"{max(0.0, timestamp):.3f}",
+        "-i", input_path,
+        "-frames:v", "1",
+        "-vf", vf,
+        "-q:v", "3",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0 or not os.path.exists(output_path):
+        raise RuntimeError(f"ffmpeg preview failed: {result.stderr}")
+    return output_path
+
+
 def apply_pipeline_combined(
     input_video: str,
     output_video: str,
