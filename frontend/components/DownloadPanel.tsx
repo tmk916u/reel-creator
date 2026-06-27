@@ -179,6 +179,29 @@ export default function DownloadPanel({ jobId, result, onReset }: Props) {
         </div>
       </div>
 
+      {result.qc_issues && result.qc_issues.length > 0 && (
+        <div className="space-y-2">
+          {result.qc_issues.map((issue, i) => {
+            const warn = issue.severity === "warn";
+            return (
+              <div
+                key={`${issue.code}-${i}`}
+                className={`flex items-start gap-2 rounded-xl border p-3 text-sm ${
+                  warn
+                    ? "border-amber-500/40 bg-amber-500/10 text-amber-100"
+                    : "border-gray-600/50 bg-gray-700/30 text-gray-300"
+                }`}
+              >
+                <span className="flex-shrink-0 text-base leading-none">
+                  {warn ? "⚠️" : "ℹ️"}
+                </span>
+                <span className="flex-1">{issue.message}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <video
         src={getDownloadUrl(jobId)}
         controls

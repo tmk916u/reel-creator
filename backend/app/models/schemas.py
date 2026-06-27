@@ -153,12 +153,19 @@ class ProgressEvent(BaseModel):
     message: str
 
 
+class QCIssue(BaseModel):
+    severity: str  # warn | info
+    code: str
+    message: str
+
+
 class JobResult(BaseModel):
     job_id: str
     status: JobStatus
     original_duration: float
     processed_duration: float
     silence_removed: float
+    qc_issues: list[QCIssue] = []
 
 
 # --- SNS Publish ---

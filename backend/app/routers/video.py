@@ -41,8 +41,9 @@ from app.services.ffmpeg import (
     overlay_hook_text, overlay_cta_text, overlay_topic_numbers, mix_bgm, mix_sfx_at_cuts,
     apply_pipeline_combined, resolve_lut_path, extract_grade_preview,
 )
-from app.services.reframe import compute_reframe_windows
+from app.services.reframe import compute_reframe_windows, probe_dimensions
 from app.services.analyze import analyze_video
+from app.services.qc import evaluate_qc
 from app.services.silence import (
     compute_voice_segments,
     protect_words_from_silences,
@@ -1038,6 +1039,21 @@ def _run_processing(job_id: str, settings: ProcessRequest):
         if jump_cut_notes:
             final_message += "（" + " / ".join(jump_cut_notes) + "）"
 
+        # 自動 QC: 投稿前に気づきたい問題を検出して警告を付与する
+        try:
+            out_dims = probe_dimensions(str(output_path)) or (None, None)
+            qc_issues = evaluate_qc({
+                "original_duration": original_duration,
+                "processed_duration": processed_duration,
+                "width": out_dims[0],
+                "height": out_dims[1],
+                "subtitles_enabled": bool(settings.enable_subtitles),
+                "segment_count": len(sub_segments),
+                "suspicious_count": sum(detect_suspicious_segments(sub_segments)),
+            })
+        except Exception:
+            qc_issues = []
+
         job.update({
             "status": JobStatus.COMPLETED,
             "stage": "done",
@@ -1046,6 +1062,7 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             "original_duration": round(original_duration, 2),
             "processed_duration": round(processed_duration, 2),
             "silence_removed": round(silence_removed, 2),
+            "qc_issues": qc_issues,
         })
 
     except Exception as e:
@@ -1123,6 +1140,7 @@ async def get_result(job_id: str):
         original_duration=job["original_duration"],
         processed_duration=job["processed_duration"],
         silence_removed=job["silence_removed"],
+        qc_issues=job.get("qc_issues") or [],
     )
 
 

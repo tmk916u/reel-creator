@@ -77,12 +77,19 @@ export interface ProgressEvent {
   message: string;
 }
 
+export interface QCIssue {
+  severity: "warn" | "info";
+  code: string;
+  message: string;
+}
+
 export interface JobResult {
   job_id: string;
   status: string;
   original_duration: number;
   processed_duration: number;
   silence_removed: number;
+  qc_issues?: QCIssue[];
 }
 
 export async function uploadVideo(file: File): Promise<UploadResponse> {
