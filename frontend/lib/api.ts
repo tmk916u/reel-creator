@@ -41,6 +41,7 @@ export interface ProcessSettings {
   font_size: "small" | "medium" | "large";
   subtitle_position: "bottom" | "center";
   subtitle_color: "white" | "yellow";
+  subtitle_motion?: "none" | "karaoke" | "fade" | "pop";
   color_grade?: "none" | "minimal" | "cinematic" | "monochrome" | "pop";
 }
 

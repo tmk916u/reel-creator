@@ -81,8 +81,8 @@ def test_stage5b_does_not_call_third_transcribe(tmp_path, monkeypatch):
             ],
         ))
         m_trans.side_effect = [
-            (word_for_jump, []),  # 1 段目 (Stage 3)
-            (word_for_jump, []),  # 2 段目 (Stage 5a, cut.mp4)
+            (word_for_jump, [], "whisperx"),  # 1 段目 (Stage 3)
+            (word_for_jump, [], "whisperx"),  # 2 段目 (Stage 5a, cut.mp4)
             # 3 段目は呼ばれない
         ]
         m_oversized.side_effect = [

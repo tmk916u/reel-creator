@@ -409,7 +409,8 @@ export default function PostDetailPage() {
             </div>
           )}
           <p className="text-xs text-gray-600">
-            ※ Instagram 投稿には HTTPS で公開した動画 URL が必要です（ngrok 等で PUBLIC_BASE_URL を公開してください）。
+            ※ Instagram 投稿には HTTPS で公開した動画 URL が必要です（ngrok 等で
+            PUBLIC_BASE_URL を公開してください）。
           </p>
         </div>
       )}

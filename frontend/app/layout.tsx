@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
-const BUILD_LABEL = (process.env.NEXT_PUBLIC_BUILD_LABEL || "").trim().toUpperCase();
+const BUILD_LABEL = (process.env.NEXT_PUBLIC_BUILD_LABEL || "")
+  .trim()
+  .toUpperCase();
 
 export const metadata: Metadata = {
   title: BUILD_LABEL ? `[${BUILD_LABEL}] Reel Creator` : "Reel Creator",

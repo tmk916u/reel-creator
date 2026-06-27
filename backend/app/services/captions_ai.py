@@ -94,7 +94,7 @@ def _transcribe_video(video_id: str) -> str:
         # 遅延 import: 既存 asr.py は重い依存（torch 等）を持つため
         from app.services.asr import transcribe_with_words
         try:
-            _, segments = transcribe_with_words(audio_path)
+            _, segments, _ = transcribe_with_words(audio_path)
         except Exception as e:
             raise TranscribeError(f"書き起こしに失敗しました: {e}") from e
 

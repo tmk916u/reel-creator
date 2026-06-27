@@ -81,48 +81,54 @@ def test_reazonspeech_zero_duration_subword_extends_to_min():
 
 # === 3 段フォールバック ===
 
-def test_fallback_reazonspeech_success_skips_others(monkeypatch):
+def test_fallback_whisperx_success_skips_others(monkeypatch):
+    """auto は WhisperX を最優先。成功すれば他は呼ばれず backend='whisperx'。"""
     monkeypatch.delenv("ASR_BACKEND", raising=False)
     calls: list[str] = []
-    monkeypatch.setattr(asr, "_transcribe_with_reazonspeech",
-                        lambda p: (calls.append("rs") or ([{"start": 0, "end": 1, "text": "x"}], [])))
-    monkeypatch.setattr(asr, "_transcribe_with_whisperx",
-                        lambda *a, **k: calls.append("wx") or None)
-    monkeypatch.setattr(asr, "_transcribe_with_faster_whisper",
-                        lambda *a, **k: calls.append("fw") or ([], []))
-
-    words, segs = asr.transcribe_with_words("/tmp/x.wav")
-    assert calls == ["rs"]
-    assert words == [{"start": 0, "end": 1, "text": "x"}]
-
-
-def test_fallback_reazonspeech_fails_to_whisperx(monkeypatch):
-    monkeypatch.delenv("ASR_BACKEND", raising=False)
-    calls: list[str] = []
-    monkeypatch.setattr(asr, "_transcribe_with_reazonspeech",
-                        lambda p: calls.append("rs") or None)
     monkeypatch.setattr(asr, "_transcribe_with_whisperx",
                         lambda *a, **k: (calls.append("wx") or ([{"start": 0, "end": 1, "text": "wx"}], [])))
+    monkeypatch.setattr(asr, "_transcribe_with_reazonspeech",
+                        lambda p: calls.append("rs") or ([], []))
     monkeypatch.setattr(asr, "_transcribe_with_faster_whisper",
                         lambda *a, **k: calls.append("fw") or ([], []))
 
-    words, _ = asr.transcribe_with_words("/tmp/x.wav")
-    assert calls == ["rs", "wx"]
-    assert words[0]["text"] == "wx"
+    words, segs, backend = asr.transcribe_with_words("/tmp/x.wav")
+    assert calls == ["wx"]
+    assert backend == "whisperx"
+    assert words == [{"start": 0, "end": 1, "text": "wx"}]
+
+
+def test_fallback_whisperx_fails_to_reazonspeech(monkeypatch):
+    """WhisperX 不可なら ReazonSpeech にフォールバック、backend='reazonspeech'。"""
+    monkeypatch.delenv("ASR_BACKEND", raising=False)
+    calls: list[str] = []
+    monkeypatch.setattr(asr, "_transcribe_with_whisperx",
+                        lambda *a, **k: calls.append("wx") or None)
+    monkeypatch.setattr(asr, "_transcribe_with_reazonspeech",
+                        lambda p: (calls.append("rs") or ([{"start": 0, "end": 1, "text": "rs"}], [])))
+    monkeypatch.setattr(asr, "_transcribe_with_faster_whisper",
+                        lambda *a, **k: calls.append("fw") or ([], []))
+
+    words, _, backend = asr.transcribe_with_words("/tmp/x.wav")
+    assert calls == ["wx", "rs"]
+    assert backend == "reazonspeech"
+    assert words[0]["text"] == "rs"
 
 
 def test_fallback_all_through_to_faster_whisper(monkeypatch):
+    """WhisperX も ReazonSpeech も不可なら faster-whisper、backend='faster-whisper'。"""
     monkeypatch.delenv("ASR_BACKEND", raising=False)
     calls: list[str] = []
-    monkeypatch.setattr(asr, "_transcribe_with_reazonspeech",
-                        lambda p: calls.append("rs") or None)
     monkeypatch.setattr(asr, "_transcribe_with_whisperx",
                         lambda *a, **k: calls.append("wx") or None)
+    monkeypatch.setattr(asr, "_transcribe_with_reazonspeech",
+                        lambda p: calls.append("rs") or None)
     monkeypatch.setattr(asr, "_transcribe_with_faster_whisper",
                         lambda *a, **k: (calls.append("fw") or ([{"start": 0, "end": 1, "text": "fw"}], [])))
 
-    words, _ = asr.transcribe_with_words("/tmp/x.wav")
-    assert calls == ["rs", "wx", "fw"]
+    words, _, backend = asr.transcribe_with_words("/tmp/x.wav")
+    assert calls == ["wx", "rs", "fw"]
+    assert backend == "faster-whisper"
     assert words[0]["text"] == "fw"
 
 

@@ -217,10 +217,13 @@ async def transcribe_preview(job_id: str, settings: TranscribeRequest):
     if not Path(audio_path).exists():
         extract_audio(input_path, audio_path)
 
-    words, _segs = transcribe_with_words(
+    words, _segs, asr_backend = transcribe_with_words(
         audio_path, initial_prompt=settings.transcript_prompt or None,
     )
-    words = clamp_oversized_word_ends(words)
+    # clamp は ReazonSpeech の subword 単一点 timestamp 由来の異常長 word 専用。
+    # WhisperX/faster-whisper は真の word.end を返すため clamp すると逆に短縮しすぎる。
+    if asr_backend == "reazonspeech":
+        words = clamp_oversized_word_ends(words)
 
     corrections = load_corrections()
     if corrections:
@@ -357,13 +360,15 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                     "progress": 30,
                     "message": "AIで音声を解析中...",
                 })
-                words, pre_cut_segments = transcribe_with_words(
+                words, pre_cut_segments, asr_backend = transcribe_with_words(
                     audio_path,
                     initial_prompt=settings.transcript_prompt or None,
                 )
                 # subword timestamp 推定で word.end が次の word.start に押し出される
-                # 現象 (「お」 word が 5-21秒) を、 文字数ベースの妥当な値にクランプ
-                words = clamp_oversized_word_ends(words)
+                # 現象 (「お」 word が 5-21秒) は ReazonSpeech 固有。WhisperX/faster-whisper
+                # では発生しないため、ReazonSpeech のときのみクランプする。
+                if asr_backend == "reazonspeech":
+                    words = clamp_oversized_word_ends(words)
 
                 # 同音異義語の辞書置換（タイムスタンプは保持）
                 corrections = load_corrections()
@@ -637,11 +642,12 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                 })
                 cut_audio = str(job_dir / "cut_audio.wav")
                 extract_audio(cut_output, cut_audio)
-                words_cut, segs_cut = transcribe_with_words(
+                words_cut, segs_cut, asr_backend_cut = transcribe_with_words(
                     cut_audio,
                     initial_prompt=settings.transcript_prompt or None,
                 )
-                words_cut = clamp_oversized_word_ends(words_cut)
+                if asr_backend_cut == "reazonspeech":
+                    words_cut = clamp_oversized_word_ends(words_cut)
                 if corrections and words_cut:
                     words_cut = apply_corrections_to_words(words_cut, corrections)
 
@@ -831,6 +837,7 @@ def _run_processing(job_id: str, settings: ProcessRequest):
                         keyword_color="#FFD700",
                         video_width=vw,
                         video_height=vh,
+                        motion_style=settings.subtitle_motion,
                     ),
                     encoding="utf-8",
                 )

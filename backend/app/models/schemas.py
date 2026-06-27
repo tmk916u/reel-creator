@@ -74,6 +74,7 @@ class ProcessRequest(BaseModel):
     font_size: FontSize = FontSize.MEDIUM
     subtitle_position: SubtitlePosition = SubtitlePosition.BOTTOM
     subtitle_color: SubtitleColor = SubtitleColor.WHITE
+    subtitle_motion: str = "pop"  # キネティック字幕: none|karaoke|fade|pop (バズモード/ASS時のみ)
     color_grade: ColorGrade = ColorGrade.NONE  # テイスト別カラーグレード(LUT)。none で従来同一
     edited_segments: list[EditedSegment] | None = None  # プレビュー編集後の字幕
 

@@ -2,11 +2,7 @@
 "use client";
 
 import { useState } from "react";
-import type {
-  JobResult,
-  CaptionsResult,
-  BuzzScoreResult,
-} from "@/lib/api";
+import type { JobResult, CaptionsResult, BuzzScoreResult } from "@/lib/api";
 import {
   getDownloadUrl,
   generateCaptions,
@@ -40,14 +36,23 @@ function CopyableTextArea({ label, text }: { label: string; text: string }) {
           {copied ? "✓ コピー" : "📋 コピー"}
         </button>
       </div>
-      <p className="text-sm text-gray-200 whitespace-pre-wrap break-words">{text}</p>
+      <p className="text-sm text-gray-200 whitespace-pre-wrap break-words">
+        {text}
+      </p>
     </div>
   );
 }
 
 function ScoreBar({ label, value }: { label: string; value: number }) {
   const pct = value * 10;
-  const color = value >= 8 ? "bg-green-400" : value >= 6 ? "bg-blue-400" : value >= 4 ? "bg-yellow-400" : "bg-red-400";
+  const color =
+    value >= 8
+      ? "bg-green-400"
+      : value >= 6
+        ? "bg-blue-400"
+        : value >= 4
+          ? "bg-yellow-400"
+          : "bg-red-400";
   return (
     <div>
       <div className="flex justify-between text-xs mb-1">
@@ -55,7 +60,10 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
         <span className="text-gray-400 font-mono">{value}</span>
       </div>
       <div className="bg-gray-700/60 h-1.5 rounded overflow-hidden">
-        <div className={`h-full ${color} transition-all`} style={{ width: `${pct}%` }} />
+        <div
+          className={`h-full ${color} transition-all`}
+          style={{ width: `${pct}%` }}
+        />
       </div>
     </div>
   );
@@ -104,7 +112,9 @@ export default function DownloadPanel({ jobId, result, onReset }: Props) {
     if (!captions) return;
     const row = parseInt(sheetRow, 10);
     if (!row || row < 2) {
-      setCaptionsError("シート行番号を入力してください（ヘッダーは1なので2以上）");
+      setCaptionsError(
+        "シート行番号を入力してください（ヘッダーは1なので2以上）",
+      );
       return;
     }
     setSheetWriting(true);
@@ -125,11 +135,15 @@ export default function DownloadPanel({ jobId, result, onReset }: Props) {
     }
   };
 
-  const overallColor =
-    !buzz ? "" :
-    buzz.overall >= 8 ? "text-green-400" :
-    buzz.overall >= 6 ? "text-blue-400" :
-    buzz.overall >= 4 ? "text-yellow-400" : "text-red-400";
+  const overallColor = !buzz
+    ? ""
+    : buzz.overall >= 8
+      ? "text-green-400"
+      : buzz.overall >= 6
+        ? "text-blue-400"
+        : buzz.overall >= 4
+          ? "text-yellow-400"
+          : "text-red-400";
 
   return (
     <div className="space-y-6">
@@ -142,16 +156,24 @@ export default function DownloadPanel({ jobId, result, onReset }: Props) {
         <div className="grid grid-cols-3 gap-3 text-center">
           <div>
             <div className="text-gray-400 text-xs">元の長さ</div>
-            <div className="text-lg font-semibold">{result.original_duration.toFixed(1)}s</div>
+            <div className="text-lg font-semibold">
+              {result.original_duration.toFixed(1)}s
+            </div>
           </div>
           <div>
             <div className="text-gray-400 text-xs">処理後</div>
-            <div className="text-lg font-semibold">{result.processed_duration.toFixed(1)}s</div>
+            <div className="text-lg font-semibold">
+              {result.processed_duration.toFixed(1)}s
+            </div>
           </div>
           <div>
             <div className="text-gray-400 text-xs">短縮</div>
             <div className="text-lg font-semibold text-blue-300">
-              {((result.silence_removed / result.original_duration) * 100).toFixed(0)}%
+              {(
+                (result.silence_removed / result.original_duration) *
+                100
+              ).toFixed(0)}
+              %
             </div>
           </div>
         </div>
@@ -223,23 +245,33 @@ export default function DownloadPanel({ jobId, result, onReset }: Props) {
               <div className="text-sm">
                 <div className="text-green-400 font-medium mb-1">✅ 強み</div>
                 <ul className="text-gray-300 space-y-1 pl-4 list-disc">
-                  {buzz.strengths.map((s, i) => <li key={i}>{s}</li>)}
+                  {buzz.strengths.map((s, i) => (
+                    <li key={i}>{s}</li>
+                  ))}
                 </ul>
               </div>
             )}
             {buzz.weaknesses.length > 0 && (
               <div className="text-sm">
-                <div className="text-yellow-400 font-medium mb-1">⚠️ 改善ポイント</div>
+                <div className="text-yellow-400 font-medium mb-1">
+                  ⚠️ 改善ポイント
+                </div>
                 <ul className="text-gray-300 space-y-1 pl-4 list-disc">
-                  {buzz.weaknesses.map((s, i) => <li key={i}>{s}</li>)}
+                  {buzz.weaknesses.map((s, i) => (
+                    <li key={i}>{s}</li>
+                  ))}
                 </ul>
               </div>
             )}
             {buzz.suggestions.length > 0 && (
               <div className="text-sm">
-                <div className="text-blue-400 font-medium mb-1">🎯 次のアクション</div>
+                <div className="text-blue-400 font-medium mb-1">
+                  🎯 次のアクション
+                </div>
                 <ol className="text-gray-300 space-y-1 pl-4 list-decimal">
-                  {buzz.suggestions.map((s, i) => <li key={i}>{s}</li>)}
+                  {buzz.suggestions.map((s, i) => (
+                    <li key={i}>{s}</li>
+                  ))}
                 </ol>
               </div>
             )}
@@ -268,15 +300,28 @@ export default function DownloadPanel({ jobId, result, onReset }: Props) {
             LLMで生成中...
           </div>
         )}
-        {captionsError && <p className="text-xs text-red-300 mb-2">{captionsError}</p>}
+        {captionsError && (
+          <p className="text-xs text-red-300 mb-2">{captionsError}</p>
+        )}
         {captions && (
           <div className="space-y-3">
-            <CopyableTextArea label="🎵 TikTok キャプション" text={captions.tiktok_caption} />
-            <CopyableTextArea label="📷 Instagram キャプション" text={captions.instagram_caption} />
-            <CopyableTextArea label="#️⃣ ハッシュタグ" text={captions.hashtags} />
+            <CopyableTextArea
+              label="🎵 TikTok キャプション"
+              text={captions.tiktok_caption}
+            />
+            <CopyableTextArea
+              label="📷 Instagram キャプション"
+              text={captions.instagram_caption}
+            />
+            <CopyableTextArea
+              label="#️⃣ ハッシュタグ"
+              text={captions.hashtags}
+            />
 
             <div className="border-t border-gray-700 pt-3 space-y-2">
-              <p className="text-xs text-gray-400">Google Sheets の指定行に書き込み:</p>
+              <p className="text-xs text-gray-400">
+                Google Sheets の指定行に書き込み:
+              </p>
               <div className="flex gap-2">
                 <input
                   type="number"
@@ -291,7 +336,11 @@ export default function DownloadPanel({ jobId, result, onReset }: Props) {
                   disabled={sheetWriting || !sheetRow}
                   className="px-4 py-2 bg-green-500/80 hover:bg-green-400 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
                 >
-                  {sheetWritten ? "✓ 書き込み済" : sheetWriting ? "書込中..." : "Sheets に追加"}
+                  {sheetWritten
+                    ? "✓ 書き込み済"
+                    : sheetWriting
+                      ? "書込中..."
+                      : "Sheets に追加"}
                 </button>
               </div>
             </div>

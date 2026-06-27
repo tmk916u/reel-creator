@@ -1,9 +1,11 @@
 # backend/app/services/asr.py
-"""音声認識の3段フォールバック層: ReazonSpeech → WhisperX → faster-whisper.
+"""音声認識の3段フォールバック層: WhisperX → ReazonSpeech → faster-whisper.
 
-返り値は全バックエンド共通で (words, segments).
+transcribe_with_words の返り値は (words, segments, backend)。
+内部の _transcribe_with_* は従来どおり (words, segments) を返す。
 words: list[{start: float, end: float, text: str}]
 segments: list[{start: float, end: float, text: str}]
+backend: 実際に結果を生成したエンジン名（clamp 要否の判定に使う）
 """
 from __future__ import annotations
 
@@ -249,29 +251,36 @@ def transcribe_with_words(
     audio_path: str,
     initial_prompt: str | None = None,
     model_size: str = "medium",
-) -> tuple[list[dict], list[dict]]:
-    """3段フォールバック: ReazonSpeech → WhisperX → faster-whisper.
+) -> tuple[list[dict], list[dict], str]:
+    """3段フォールバック: WhisperX → ReazonSpeech → faster-whisper.
+
+    返り値は (words, segments, backend)。backend は実際に結果を生成したエンジン名
+    ("whisperx" | "reazonspeech" | "faster-whisper")。呼び出し側はこれを使って
+    clamp_oversized_word_ends の要否を判断する（ReazonSpeech のみ subword 単一点
+    timestamp 由来の異常長 word を持つため clamp が必要。WhisperX/faster-whisper は
+    forced alignment / word_timestamps で真の word.end を返すため clamp 不要）。
 
     ASR_BACKEND 環境変数で個別バックエンド強制可能。
     """
     prompt = initial_prompt or _DEFAULT_INITIAL_PROMPT
     backend = _backend_env()
 
-    if backend in ("auto", "reazonspeech"):
-        result = _transcribe_with_reazonspeech(audio_path)
-        if result is not None:
-            return result
-        if backend == "reazonspeech":
-            raise RuntimeError("ASR_BACKEND=reazonspeech ですが ReazonSpeech が利用できません")
-
     if backend in ("auto", "whisperx"):
         result = _transcribe_with_whisperx(audio_path, prompt, model_size)
         if result is not None:
-            return result
+            return result[0], result[1], "whisperx"
         if backend == "whisperx":
             raise RuntimeError("ASR_BACKEND=whisperx ですが WhisperX が利用できません")
 
-    return _transcribe_with_faster_whisper(audio_path, prompt, model_size)
+    if backend in ("auto", "reazonspeech"):
+        result = _transcribe_with_reazonspeech(audio_path)
+        if result is not None:
+            return result[0], result[1], "reazonspeech"
+        if backend == "reazonspeech":
+            raise RuntimeError("ASR_BACKEND=reazonspeech ですが ReazonSpeech が利用できません")
+
+    words, segments = _transcribe_with_faster_whisper(audio_path, prompt, model_size)
+    return words, segments, "faster-whisper"
 
 
 def clamp_oversized_word_ends(

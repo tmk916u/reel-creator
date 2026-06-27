@@ -172,7 +172,8 @@ export default function NewPostPage() {
                   ✨ AI キャプション生成
                 </h2>
                 <p className="text-xs text-purple-300/80">
-                  音声から自動でキャプション・タイトル・説明文・ハッシュタグ・カバー文字案を生成します（30〜60 秒）
+                  音声から自動でキャプション・タイトル・説明文・ハッシュタグ・カバー文字案を生成します（30〜60
+                  秒）
                 </p>
               </div>
               <button
@@ -180,7 +181,11 @@ export default function NewPostPage() {
                 disabled={aiBusy}
                 className="shrink-0 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold hover:bg-purple-500 disabled:opacity-50"
               >
-                {aiBusy ? "生成中…" : aiCovers.length > 0 ? "再生成" : "AI で生成"}
+                {aiBusy
+                  ? "生成中…"
+                  : aiCovers.length > 0
+                    ? "再生成"
+                    : "AI で生成"}
               </button>
             </div>
           </section>
@@ -305,7 +310,8 @@ export default function NewPostPage() {
                 📌 カバー文字案（AI）
               </h2>
               <p className="mb-3 text-xs text-gray-500">
-                リール冒頭のテキストオーバーレイ用。コピーして TikTok / Edits 等で動画に合成してください。
+                リール冒頭のテキストオーバーレイ用。コピーして TikTok / Edits
+                等で動画に合成してください。
               </p>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 {aiCovers.map((text, i) => (

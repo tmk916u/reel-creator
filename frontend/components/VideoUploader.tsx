@@ -43,7 +43,7 @@ export default function VideoUploader({ onUploaded }: Props) {
         setUploading(false);
       }
     },
-    [onUploaded]
+    [onUploaded],
   );
 
   return (
@@ -96,10 +96,14 @@ export default function VideoUploader({ onUploaded }: Props) {
           <div>
             <div className="text-6xl mb-4">🎬</div>
             <div className="text-2xl font-bold mb-2">
-              動画を<span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">ドラッグ&ドロップ</span>
+              動画を
+              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                ドラッグ&ドロップ
+              </span>
             </div>
             <div className="text-gray-400 text-sm">
-              または<span className="underline">クリックしてファイルを選択</span>
+              または
+              <span className="underline">クリックしてファイルを選択</span>
             </div>
             <div className="flex flex-wrap gap-2 justify-center mt-5 text-xs">
               <span className="bg-gray-800/60 border border-gray-700 px-3 py-1 rounded-full text-gray-400">

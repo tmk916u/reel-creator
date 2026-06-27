@@ -12,7 +12,8 @@ type WebkitWindow = Window & { webkitAudioContext?: typeof AudioContext };
 function getCtx(): AudioContext | null {
   if (typeof window === "undefined") return null;
   if (audioCtx) return audioCtx;
-  const Ctor = window.AudioContext || (window as WebkitWindow).webkitAudioContext;
+  const Ctor =
+    window.AudioContext || (window as WebkitWindow).webkitAudioContext;
   if (!Ctor) return null;
   try {
     audioCtx = new Ctor();

@@ -31,8 +31,7 @@ export default function ConnectionsPage() {
       const q = new URLSearchParams(window.location.search);
       const connected = q.get("connected");
       if (connected === "youtube") setNotice("YouTube を連携しました");
-      else if (connected === "instagram")
-        setNotice("Instagram を連携しました");
+      else if (connected === "instagram") setNotice("Instagram を連携しました");
 
       const ytErr = q.get("youtube_error");
       const igErr = q.get("instagram_error");

@@ -346,8 +346,9 @@ def segments_to_ass(
     keyword_color: str = "#FFD700",
     video_width: int = 1080,
     video_height: int = 1920,
+    motion_style: str = "karaoke",
 ) -> str:
-    """単語タイムスタンプ付きセグメントから ASS 字幕（カラオケ風モーション）を生成する。
+    """単語タイムスタンプ付きセグメントから ASS 字幕（キネティックモーション）を生成する。
 
     Args:
         segments: words を含むセグメントリスト
@@ -358,6 +359,13 @@ def segments_to_ass(
         keywords: 強調表示するキーワード
         keyword_color: キーワードの色
         video_width, video_height: ビデオサイズ（ASS の PlayRes）
+        motion_style: 字幕の動き
+            "none"     : 動きなし（静止表示、キーワード色のみ）
+            "karaoke"  : 既存のカラオケ風カラースイープ（\\kf）
+            "fade"     : カラオケ + 行全体のソフトフェードイン/アウト（上品）
+            "pop"      : カラオケ + 語ごとの控えめなスケール pop（元気め）
+            WhisperX の高精度 word timestamp 前提。\\t の時刻は行頭からの
+            ミリ秒、\\kf の duration はセンチ秒で別単位なので混同しないこと。
 
     Returns:
         ASS ファイル文字列
@@ -401,30 +409,50 @@ def segments_to_ass(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
 
+    motion = motion_style if motion_style in ("none", "karaoke", "fade", "pop") else "karaoke"
+    # 行全体のソフトフェード（ms）。fade のみ適用。
+    line_lead = "{\\fad(120,80)}" if motion == "fade" else ""
+    # pop の語スケール演出（ms, 行頭からの相対時刻）
+    POP_RISE_MS, POP_FALL_MS, POP_SCALE = 90, 230, 113
+
     dialogues: list[str] = []
     for seg in segments:
         seg_words = seg.get("words") or []
+        # words が無い seg はスキップ（カット駆動のため、word が remap で全消失した区間は
+        # 動画からも消えている。seg.text を描画すると phantom 字幕になるので出さない）。
         if not seg_words:
             continue
+
+        line_start = seg_words[0]["start"]
         parts: list[str] = []
         for w in seg_words:
-            duration_cs = max(1, int(round((w["end"] - w["start"]) * 100)))
-            text = w["text"]
+            text = w.get("text") or w.get("word") or ""
             if not text:
                 continue
+            duration_cs = max(1, int(round((w["end"] - w["start"]) * 100)))
+            off_ms = max(0, int(round((w["start"] - line_start) * 1000)))
+
+            tags = "" if motion == "none" else f"\\kf{duration_cs}"
+            if motion == "pop":
+                tags += (
+                    f"\\fscx100\\fscy100"
+                    f"\\t({off_ms},{off_ms + POP_RISE_MS},\\fscx{POP_SCALE}\\fscy{POP_SCALE})"
+                    f"\\t({off_ms + POP_RISE_MS},{off_ms + POP_FALL_MS},\\fscx100\\fscy100)"
+                )
+
             normalized = text.strip().strip("、。！？!?.,")
             if normalized in keywords_set:
-                parts.append(
-                    f"{{\\kf{duration_cs}\\c{keyword_ass}}}{text}{{\\c{primary_ass}}}"
-                )
+                parts.append(f"{{{tags}\\c{keyword_ass}}}{text}{{\\c{primary_ass}}}")
+            elif tags:
+                parts.append(f"{{{tags}}}{text}")
             else:
-                parts.append(f"{{\\kf{duration_cs}}}{text}")
+                parts.append(text)
         if not parts:
             continue
         start_t = _ass_time(seg_words[0]["start"])
         end_t = _ass_time(seg_words[-1]["end"])
         dialogues.append(
-            f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{''.join(parts)}"
+            f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{line_lead}{''.join(parts)}"
         )
 
     return header + "\n".join(dialogues) + "\n"
@@ -462,7 +490,7 @@ from .asr import transcribe_with_words  # noqa: F401  re-export for backward com
 
 def transcribe_audio(audio_path: str, srt_output_path: str, initial_prompt: str | None = None) -> str:
     """音声を文字起こしし、SRTファイルを生成"""
-    _words, segments = transcribe_with_words(audio_path, initial_prompt=initial_prompt)
+    _words, segments, _backend = transcribe_with_words(audio_path, initial_prompt=initial_prompt)
     srt_content = segments_to_srt(segments)
     Path(srt_output_path).write_text(srt_content, encoding="utf-8")
     return srt_output_path
