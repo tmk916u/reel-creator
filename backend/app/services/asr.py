@@ -157,26 +157,25 @@ def _transcribe_with_whisperx(
 ) -> tuple[list[dict], list[dict]] | None:
     try:
         import whisperx  # noqa: F401
-        try:
-            import torch.serialization
-            from omegaconf.listconfig import ListConfig
-            from omegaconf.dictconfig import DictConfig
-            from omegaconf.base import ContainerMetadata, Metadata
-            from omegaconf.nodes import AnyNode
-            import typing
-            torch.serialization.add_safe_globals([
-                ListConfig, DictConfig, ContainerMetadata, Metadata, AnyNode,
-                typing.Any, typing.List, typing.Dict, typing.Tuple, typing.Optional,
-                typing.Union, typing.Sequence, typing.Mapping,
-            ])
-        except Exception as patch_e:
-            logger.warning("WhisperX safe-globals patch skipped: %s", patch_e)
+        import torch
     except Exception as e:
         logger.info("WhisperX not available: %s", e)
         return None
 
+    # PyTorch 2.6 は torch.load の weights_only を既定 True にした。WhisperX/wav2vec2 の
+    # チェックポイントは omegaconf 設定など非 tensor を含み、weights_only=True では
+    # builtins.list 等が拒否されて読み込みに失敗する。HF 由来の信頼できるモデルなので、
+    # WhisperX のロード中だけ weights_only=False に切り替える。finally で必ず復元し、
+    # silero/NeMo など他バックエンドの torch.load には影響させない。
+    _orig_torch_load = torch.load
+
+    def _trusted_load(*args, **kwargs):
+        kwargs["weights_only"] = False
+        return _orig_torch_load(*args, **kwargs)
+
     try:
         import whisperx
+        torch.load = _trusted_load
         t0 = time.time()
         audio = whisperx.load_audio(audio_path)
         model = _load_whisperx_model(model_size, "ja", initial_prompt)
@@ -209,8 +208,10 @@ def _transcribe_with_whisperx(
         )
         return words, segments
     except Exception as e:
-        logger.warning("WhisperX failed, falling back to faster-whisper: %s", e)
+        logger.warning("WhisperX failed, falling back: %s", e)
         return None
+    finally:
+        torch.load = _orig_torch_load
 
 
 # === faster-whisper ===
