@@ -74,6 +74,12 @@ export default function PostListPage() {
         </div>
         <div className="flex gap-2">
           <Link
+            href="/post/profile"
+            className="rounded-lg border border-gray-700 px-4 py-2 text-sm hover:bg-gray-800"
+          >
+            アカウント設定
+          </Link>
+          <Link
             href="/post/connections"
             className="rounded-lg border border-gray-700 px-4 py-2 text-sm hover:bg-gray-800"
           >

@@ -473,3 +473,39 @@ export async function suggestCaptions(
   if (!res.ok) await throwApiError(res, "AI 生成に失敗しました");
   return res.json();
 }
+
+// --- アカウント文脈プロファイル (account-context-profile) ---
+
+export interface AccountProfile {
+  id: string;
+  niche: string | null;
+  target_audience: string | null;
+  tone: string | null;
+  goals: string | null;
+  hashtags: string | null;
+  ng_words: string | null;
+  notes: string | null;
+  updated_at: string;
+}
+
+export type AccountProfileInput = Omit<AccountProfile, "id" | "updated_at">;
+
+export async function getAccountProfile(): Promise<AccountProfile> {
+  const res = await fetch(`${API_URL}/api/account-profile`, {
+    cache: "no-store",
+  });
+  if (!res.ok) await throwApiError(res, "プロファイルの取得に失敗しました");
+  return res.json();
+}
+
+export async function updateAccountProfile(
+  input: Partial<AccountProfileInput>,
+): Promise<AccountProfile> {
+  const res = await fetch(`${API_URL}/api/account-profile`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) await throwApiError(res, "プロファイルの保存に失敗しました");
+  return res.json();
+}
