@@ -12,7 +12,7 @@
 //   5. --render 指定時はそのままレンダー
 //
 // レンダーはホスト(mac)側で実行する想定（HyperFrames はヘッドレス Chromium を使うため）。
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, cpSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, cpSync, existsSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { execSync } from "node:child_process";
@@ -98,6 +98,7 @@ async function main() {
   writeFileSync(join(dest, ".gitignore"), "node_modules/\nrenders/\nsnapshots/\nindex.html\nfootage.mp4\n");
 
   console.log(`✓ プロジェクトを生成: hyperframes/jobs/${jobId}/`);
+  console.log(`  テイスト: ${brief.template}`);
   console.log(`  ブランド: ${brief.copy.wordmark}  ハンドル: ${brief.copy.handle || "(未設定)"}`);
   console.log(`  footage: ${(footage.length / 1e6).toFixed(1)}MB (${grade}, ${start}s〜+${duration}s)`);
 
@@ -105,6 +106,19 @@ async function main() {
   if (flag("render")) {
     console.log("→ レンダー中…");
     execSync("npm run render", { cwd: dest, stdio: "inherit" });
+    if (flag("open")) {
+      // 最新の MP4 を開く（macOS）
+      try {
+        const rdir = join(dest, "renders");
+        const mp4 = readdirSync(rdir)
+          .filter((f) => f.endsWith(".mp4"))
+          .map((f) => ({ f, t: statSync(join(rdir, f)).mtimeMs }))
+          .sort((a, b) => b.t - a.t)[0];
+        if (mp4) execSync(`open ${JSON.stringify(join(rdir, mp4.f))}`);
+      } catch (e) {
+        console.warn("(open に失敗:", e.message, ")");
+      }
+    }
   } else {
     console.log("\n次の手順:");
     console.log(`  1) hyperframes/jobs/${jobId}/brief.json のコピーを編集`);
