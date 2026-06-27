@@ -491,6 +491,8 @@ export async function suggestCaptions(
 
 export interface AccountProfile {
   id: string;
+  brand_name: string | null;
+  handle: string | null;
   niche: string | null;
   target_audience: string | null;
   tone: string | null;

@@ -326,6 +326,8 @@ class CaptionSuggestionResponse(BaseModel):
 
 class AccountProfileIn(BaseModel):
     """プロファイル更新リクエスト。全フィールド任意。"""
+    brand_name: str | None = None
+    handle: str | None = None
     niche: str | None = None
     target_audience: str | None = None
     tone: str | None = None

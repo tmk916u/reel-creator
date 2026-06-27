@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.routers import video as video_module
-from app.services.ffmpeg import build_preview_vf
+from app.services.ffmpeg import build_preview_vf, build_vertical_grade_vf
 
 
 # --- build_preview_vf (純粋関数) ---
@@ -20,6 +20,25 @@ def test_preview_vf_with_lut_applies_lut_first():
 
 def test_preview_vf_width_int_coerced():
     assert build_preview_vf(None, 240) == "scale=240:-2"
+
+
+# --- build_vertical_grade_vf (純粋関数) ---
+
+def test_vertical_grade_vf_with_lut():
+    vf = build_vertical_grade_vf("/luts/cinematic.cube", 1080, 1920)
+    assert vf == (
+        "lut3d=file=/luts/cinematic.cube,"
+        "scale=1080:1920:force_original_aspect_ratio=increase,"
+        "crop=1080:1920,setsar=1"
+    )
+    assert vf.index("lut3d") < vf.index("scale") < vf.index("crop")
+
+
+def test_vertical_grade_vf_no_lut_omits_lut3d():
+    vf = build_vertical_grade_vf(None, 1080, 1920)
+    assert "lut3d" not in vf
+    assert vf.startswith("scale=1080:1920")
+    assert vf.endswith("setsar=1")
 
 
 # --- /api/preview/{job_id}/grade/{grade} エンドポイント ---

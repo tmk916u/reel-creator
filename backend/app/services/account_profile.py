@@ -14,7 +14,7 @@ from app.models.db_models import AccountProfile
 # プロファイル未設定時のフォールバック領域（従来のハードコード値）
 _DEFAULT_NICHE = "整体院 / ヘルスケア領域"
 
-_FIELDS = ("niche", "target_audience", "tone", "goals", "hashtags", "ng_words", "notes")
+_FIELDS = ("brand_name", "handle", "niche", "target_audience", "tone", "goals", "hashtags", "ng_words", "notes")
 
 
 def build_caption_system_prompt(profile: dict | None) -> str:

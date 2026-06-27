@@ -39,7 +39,7 @@ from app.models.schemas import (
 from app.services.ffmpeg import (
     get_video_duration, extract_audio, detect_silence, cut_and_concat, burn_subtitles,
     overlay_hook_text, overlay_cta_text, overlay_topic_numbers, mix_bgm, mix_sfx_at_cuts,
-    apply_pipeline_combined, resolve_lut_path, extract_grade_preview,
+    apply_pipeline_combined, resolve_lut_path, extract_grade_preview, grade_to_vertical,
 )
 from app.services.reframe import compute_reframe_windows, probe_dimensions
 from app.services.analyze import analyze_video
@@ -1196,6 +1196,41 @@ def preview_grade(job_id: str, grade: str):
             raise HTTPException(500, f"プレビュー生成に失敗しました: {e}")
 
     return FileResponse(str(cache_path), media_type="image/jpeg")
+
+
+@router.get("/hyperframes/footage/{job_id}")
+def hyperframes_footage(
+    job_id: str, grade: str = "cinematic", start: float = 0.0, duration: float | None = None
+):
+    """HyperFrames 受け渡し用の色味済み縦型(1080x1920)クリーン映像を返す。
+
+    字幕・テロップは焼かない（文字は HyperFrames 側が担当するため）。
+    grade はカラーグレード名（none/minimal/cinematic/monochrome/pop）。
+    """
+    if grade not in _PREVIEW_GRADES:
+        raise HTTPException(404, f"未知のテイスト: {grade}")
+
+    job_dir = TMP_DIR / job_id
+    input_path = job_dir / "input.mp4"
+    if not input_path.exists():
+        raise HTTPException(404, "アップロード動画が見つかりません")
+
+    lut_path = (
+        None if grade == "none"
+        else resolve_lut_path(grade, Path("/app/app/data/luts"))
+    )
+    out_path = job_dir / f"hf_footage_{grade}.mp4"
+    try:
+        grade_to_vertical(
+            str(input_path), str(out_path),
+            lut_path=lut_path, start=start, duration=duration,
+        )
+    except RuntimeError as e:
+        raise HTTPException(500, f"footage 書き出しに失敗しました: {e}")
+
+    return FileResponse(
+        str(out_path), media_type="video/mp4", filename="footage.mp4"
+    )
 
 
 def _get_cached_transcript(job_id: str) -> str:

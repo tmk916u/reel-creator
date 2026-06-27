@@ -782,6 +782,55 @@ def extract_grade_preview(
     return output_path
 
 
+def build_vertical_grade_vf(lut_path: str | None, width: int, height: int) -> str:
+    """色味付き縦型(width x height)書き出し用の -vf 文字列を作る（純粋関数）。
+
+    lut3d を先頭に挟み、cover でリサイズ＆センタークロップ、SAR を 1 に揃える。
+    """
+    parts: list[str] = []
+    if lut_path:
+        parts.append(f"lut3d=file={lut_path}")
+    parts.append(
+        f"scale={int(width)}:{int(height)}:force_original_aspect_ratio=increase"
+    )
+    parts.append(f"crop={int(width)}:{int(height)}")
+    parts.append("setsar=1")
+    return ",".join(parts)
+
+
+def grade_to_vertical(
+    input_path: str,
+    output_path: str,
+    *,
+    lut_path: str | None,
+    start: float = 0.0,
+    duration: float | None = None,
+    width: int = 1080,
+    height: int = 1920,
+    fps: int = 30,
+) -> str:
+    """input を色味付きの縦型(1080x1920)クリーン映像として書き出す（字幕なし）。
+
+    HyperFrames 受け渡し用の footage を作る。失敗時は RuntimeError。
+    """
+    vf = build_vertical_grade_vf(lut_path, width, height)
+    cmd = ["ffmpeg", "-y", "-ss", f"{max(0.0, start):.3f}"]
+    if duration is not None:
+        cmd += ["-t", f"{max(0.1, duration):.3f}"]
+    cmd += [
+        "-i", input_path,
+        "-vf", vf,
+        "-an",
+        "-r", str(int(fps)),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0 or not os.path.exists(output_path):
+        raise RuntimeError(f"ffmpeg grade_to_vertical failed: {result.stderr}")
+    return output_path
+
+
 def apply_pipeline_combined(
     input_video: str,
     output_video: str,

@@ -86,6 +86,8 @@ class AccountProfile(Base):
     __tablename__ = "account_profiles"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    brand_name: Mapped[str | None] = mapped_column(Text)       # ブランド名/屋号（リールのワードマーク）
+    handle: Mapped[str | None] = mapped_column(Text)           # SNSハンドル（@xxx）
     niche: Mapped[str | None] = mapped_column(Text)            # ジャンル/専門領域
     target_audience: Mapped[str | None] = mapped_column(Text)  # ターゲット視聴者
     tone: Mapped[str | None] = mapped_column(Text)             # トーン/語り口

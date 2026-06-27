@@ -18,6 +18,16 @@ type Field = {
 
 const FIELDS: Field[] = [
   {
+    key: "brand_name",
+    label: "ブランド名 / 屋号",
+    placeholder: "例: 一木空間（リールのワードマークに使用）",
+  },
+  {
+    key: "handle",
+    label: "SNS ハンドル",
+    placeholder: "例: ichiki_kuukan（@ は不要）",
+  },
+  {
     key: "niche",
     label: "ジャンル / 専門領域",
     placeholder: "例: 整体院 / 腰痛・肩こり改善",
@@ -61,6 +71,8 @@ const FIELDS: Field[] = [
 ];
 
 const EMPTY: AccountProfileInput = {
+  brand_name: "",
+  handle: "",
   niche: "",
   target_audience: "",
   tone: "",
@@ -81,6 +93,8 @@ export default function AccountProfilePage() {
     try {
       const p = await getAccountProfile();
       setForm({
+        brand_name: p.brand_name ?? "",
+        handle: p.handle ?? "",
         niche: p.niche ?? "",
         target_audience: p.target_audience ?? "",
         tone: p.tone ?? "",
