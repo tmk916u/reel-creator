@@ -111,6 +111,7 @@ export default function ProcessingPanel({
     subtitle_color: "white",
     color_grade: "none",
     subtitle_motion: "pop",
+    enable_auto_reframe: false,
     // ⚡ぎっしりプリセットの設定をマージ (初期適用)
     ...PRESETS.tight,
   });
@@ -681,6 +682,33 @@ export default function ProcessingPanel({
             </div>
             <p className="text-xs text-gray-500 -mt-3">
               backend/app/data/sfx/cut.mp3 を配置すると鳴ります
+            </p>
+
+            {/* オートリフレーム（被写体追従） */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-300">
+                🎥 オートリフレーム(被写体追従)
+              </span>
+              <button
+                onClick={() =>
+                  setSettings((s) => ({
+                    ...s,
+                    enable_auto_reframe: !s.enable_auto_reframe,
+                  }))
+                }
+                className={`relative w-12 h-6 rounded-full transition-colors ${
+                  settings.enable_auto_reframe ? "bg-pink-500" : "bg-gray-600"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                    settings.enable_auto_reframe ? "translate-x-6" : ""
+                  }`}
+                />
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 -mt-3">
+              横動画でも被写体を中心に保って縦リール化。処理時間が少し伸びます
             </p>
 
             {/* バズモード */}

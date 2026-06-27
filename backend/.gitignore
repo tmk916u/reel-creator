@@ -1,0 +1,3 @@
+
+# YOLO weights (Dockerfile が /opt に事前DL。リポジトリには含めない)
+*.pt

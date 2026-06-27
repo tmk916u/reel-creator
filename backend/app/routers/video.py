@@ -41,6 +41,7 @@ from app.services.ffmpeg import (
     overlay_hook_text, overlay_cta_text, overlay_topic_numbers, mix_bgm, mix_sfx_at_cuts,
     apply_pipeline_combined, resolve_lut_path,
 )
+from app.services.reframe import compute_reframe_windows
 from app.services.silence import (
     compute_voice_segments,
     protect_words_from_silences,
@@ -600,10 +601,30 @@ def _run_processing(job_id: str, settings: ProcessRequest):
             })
             return
 
-        # Stage 4: Cut & concat
+        # Stage 4: Cut & concat（オートリフレーム有効時は被写体追従 crop を計算）
+        crop_windows = None
+        if settings.enable_auto_reframe:
+            job.update({"stage": "reframe", "progress": 52,
+                        "message": "被写体を解析中（オートリフレーム）..."})
+            try:
+                crop_windows = compute_reframe_windows(
+                    input_path, voice_segments,
+                    sample_fps=settings.reframe_sample_fps,
+                    smoothing=settings.reframe_smoothing,
+                    padding=settings.reframe_padding,
+                )
+                if crop_windows:
+                    n = sum(1 for w in crop_windows if w)
+                    jump_cut_notes.append(f"オートリフレーム: {n}/{len(crop_windows)} 区間で被写体追従")
+                else:
+                    jump_cut_notes.append("オートリフレーム: 被写体検出なし → 通常処理")
+            except Exception as e:
+                jump_cut_notes.append(f"オートリフレーム失敗 → 通常処理 ({e})")
+                crop_windows = None
+
         job.update({"stage": "cut_concat", "progress": 55, "message": "不要区間を削除中..."})
         cut_output = str(job_dir / "cut.mp4")
-        cut_and_concat(input_path, voice_segments, cut_output)
+        cut_and_concat(input_path, voice_segments, cut_output, crop_windows=crop_windows)
 
         processed_duration = get_video_duration(cut_output)
         final_output = cut_output

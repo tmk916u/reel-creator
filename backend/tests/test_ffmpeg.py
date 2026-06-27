@@ -83,6 +83,33 @@ def test_build_cut_concat_filter_uses_input_zero_for_all_segments():
     assert "[2:" not in f
 
 
+def test_build_cut_concat_filter_crop_window_applied():
+    """crop_windows 指定 segment は letterbox の代わりに crop+scale を使う"""
+    segs = [{"start": 0.0, "end": 2.0}]
+    windows = [{"w": 608, "h": 1080, "x": 100, "y": 0}]
+    f = _build_cut_concat_filter(segs, crop_windows=windows)
+    assert "crop=608:1080:100:0,scale=1080:1920,setsar=1" in f
+    # その segment では letterbox(pad)を使わない
+    assert "pad=1080:1920" not in f
+
+
+def test_build_cut_concat_filter_crop_none_falls_back_to_letterbox():
+    """crop_windows[i] が None の segment は従来 letterbox にフォールバック"""
+    segs = [{"start": 0.0, "end": 2.0}, {"start": 3.0, "end": 4.0}]
+    windows = [{"w": 608, "h": 1080, "x": 50, "y": 0}, None]
+    f = _build_cut_concat_filter(segs, crop_windows=windows)
+    assert "crop=608:1080:50:0,scale=1080:1920,setsar=1" in f  # seg0: crop
+    assert "pad=1080:1920" in f  # seg1: letterbox
+
+
+def test_build_cut_concat_filter_no_windows_unchanged():
+    """crop_windows 未指定なら従来通り全 segment letterbox"""
+    segs = [{"start": 0.0, "end": 2.0}]
+    f = _build_cut_concat_filter(segs)
+    assert "pad=1080:1920" in f
+    assert "crop=" not in f
+
+
 def test_fit_overlay_text_short_keeps_base_size():
     """短いテキストはそのまま base_size で 1 行"""
     wrapped, size = _fit_overlay_text("短い", base_size=80)

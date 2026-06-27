@@ -78,12 +78,17 @@ def _build_cut_concat_filter(
     target_width: int = 1080,
     target_height: int = 1920,
     fps: int = 30,
+    crop_windows: list[dict | None] | None = None,
 ) -> str:
     """cut_and_concat 用の filter_complex 文字列を組み立てる。
 
     各セグメントを scale+pad で target サイズに揃え、音声に短い fade を掛け、
     最後に concat フィルタで結合する。concat 出力には fps を明示し、
     libx264 の MB rate 検出が縦動画の displaymatrix で暴走するのを防ぐ。
+
+    crop_windows を渡すと、その segment は letterbox の代わりに被写体追従 crop
+    (オートリフレーム) を適用する。crop_windows[i] が None または未指定の segment は
+    従来の scale+pad で 9:16 中央配置にフォールバックする。
 
     seg_dur < 3*audio_fade のときフェード長を dur/3 にクランプ、
     seg_dur=0 はフェードなし。
@@ -103,9 +108,18 @@ def _build_cut_concat_filter(
         fade_d = min(audio_fade, dur / 3) if dur > 0 else 0.0
         fade_out_st = max(0.0, dur - fade_d)
 
+        cw = crop_windows[i] if crop_windows and i < len(crop_windows) else None
+        if cw:
+            # オートリフレーム: 被写体中心へ crop してから target へ scale
+            vf = (
+                f"crop={int(cw['w'])}:{int(cw['h'])}:{int(cw['x'])}:{int(cw['y'])},"
+                f"scale={target_width}:{target_height},setsar=1"
+            )
+        else:
+            vf = vf_resize
         parts.append(
             f"[0:v]trim=start={start:.3f}:end={end:.3f},"
-            f"setpts=PTS-STARTPTS,{vf_resize}[v{i}]"
+            f"setpts=PTS-STARTPTS,{vf}[v{i}]"
         )
         if fade_d > 0:
             parts.append(
@@ -147,10 +161,11 @@ def _run_cut_concat_single_pass(
     target_height: int,
     fps: int,
     timeout: int = 600,
+    crop_windows: list[dict | None] | None = None,
 ) -> None:
     """単一の filter_complex で trim+concat を 1 パス実行 (内部実装)。"""
     filter_complex = _build_cut_concat_filter(
-        segments, audio_fade, target_width, target_height, fps,
+        segments, audio_fade, target_width, target_height, fps, crop_windows,
     )
     cmd = [
         "ffmpeg", "-y", "-i", video_path,
@@ -185,12 +200,17 @@ def cut_and_concat(
     fps: int = 30,
     chunk_size: int = 10,
     timeout: int = 600,
+    crop_windows: list[dict | None] | None = None,
 ) -> str:
     """有音セグメントをカットして結合 (リール解像度 1080x1920 にダウンスケール)。
 
     segments が chunk_size を超える場合は chunk 分割して個別 ffmpeg で処理し、
     concat demuxer で結合する。 これにより 50+ trim を 1 つの filter_complex に
     詰め込むことで発生していた ffmpeg メモリ爆発による hang を回避する。
+
+    crop_windows を渡すと segment ごとにオートリフレーム crop を適用する
+    (segments と同順・同数。None 要素は従来 letterbox)。chunk 分割時は windows も
+    同期してスライスする。
 
     Args:
         chunk_size: 1 chunk あたりの最大 segments 数 (デフォルト 10)
@@ -200,12 +220,16 @@ def cut_and_concat(
         raise ValueError("No segments to concatenate")
 
     chunks = _chunk_segments(segments, chunk_size)
+    win_chunks = (
+        _chunk_segments(crop_windows, chunk_size) if crop_windows is not None else None
+    )
 
     if len(chunks) == 1:
         # 小規模: 従来通り 1 パス
         _run_cut_concat_single_pass(
             video_path, segments, output_path,
             audio_fade, target_width, target_height, fps, timeout,
+            crop_windows=crop_windows,
         )
         return output_path
 
@@ -219,6 +243,7 @@ def cut_and_concat(
             _run_cut_concat_single_pass(
                 video_path, chunk, chunk_out,
                 audio_fade, target_width, target_height, fps, timeout,
+                crop_windows=win_chunks[i] if win_chunks is not None else None,
             )
             chunk_outputs.append(chunk_out)
         # concat demuxer 用のリストを作成

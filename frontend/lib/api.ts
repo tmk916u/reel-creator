@@ -43,6 +43,10 @@ export interface ProcessSettings {
   subtitle_color: "white" | "yellow";
   subtitle_motion?: "none" | "karaoke" | "fade" | "pop";
   color_grade?: "none" | "minimal" | "cinematic" | "monochrome" | "pop";
+  enable_auto_reframe?: boolean;
+  reframe_sample_fps?: number;
+  reframe_smoothing?: number;
+  reframe_padding?: number;
 }
 
 export interface ProgressEvent {

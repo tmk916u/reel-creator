@@ -76,6 +76,10 @@ class ProcessRequest(BaseModel):
     subtitle_color: SubtitleColor = SubtitleColor.WHITE
     subtitle_motion: str = "pop"  # キネティック字幕: none|karaoke|fade|pop (バズモード/ASS時のみ)
     color_grade: ColorGrade = ColorGrade.NONE  # テイスト別カラーグレード(LUT)。none で従来同一
+    enable_auto_reframe: bool = False  # 被写体追従オートリフレーム(横→9:16でも中心維持)
+    reframe_sample_fps: float = 3.0  # リフレーム検出のフレームサンプリングfps
+    reframe_smoothing: float = 0.85  # カット間の中心EMA平滑(0..1, 大きいほど滑らか)
+    reframe_padding: float = 0.15  # 被写体周りの余白(将来用)
     edited_segments: list[EditedSegment] | None = None  # プレビュー編集後の字幕
 
 
