@@ -36,6 +36,7 @@ if (!jobId) {
 const grade = opt("grade", "cinematic");
 const start = opt("start", "0");
 const duration = opt("duration", "12");
+const template = opt("template", "cinematic-serif"); // テイスト: cinematic-serif | bold-gothic
 
 // ---- brief 生成（プロファイル → ブランドリールのコピー）----
 function romajiFromHandle(handle) {
@@ -47,6 +48,7 @@ function buildBrief(profile) {
   const wordmark = (profile.brand_name || profile.niche || "BRAND").trim();
   return {
     _comment: "自動生成。コピー(copy)は仮置きなので編集して `npm run render`。phrase は <em>…</em> でアクセント。",
+    template, // テイスト(templates/<name>.tmpl)
     footage: "footage.mp4",
     colors: {
       ivory: "#f4ede0",
@@ -85,9 +87,10 @@ async function main() {
   // 4. scaffold
   const dest = join(HERE, "jobs", jobId);
   mkdirSync(dest, { recursive: true });
-  for (const f of ["template.tmpl", "build.mjs", "package.json", "hyperframes.json"]) {
+  for (const f of ["build.mjs", "package.json", "hyperframes.json"]) {
     copyFileSync(join(TEMPLATE_DIR, f), join(dest, f));
   }
+  cpSync(join(TEMPLATE_DIR, "templates"), join(dest, "templates"), { recursive: true });
   cpSync(join(TEMPLATE_DIR, "fonts"), join(dest, "fonts"), { recursive: true });
   writeFileSync(join(dest, "footage.mp4"), footage);
   writeFileSync(join(dest, "brief.json"), JSON.stringify(brief, null, 2) + "\n");

@@ -1,5 +1,6 @@
 {
   "_comment": "このファイルを編集して `npm run build` → `npm run render`。phrase は <em>…</em> でアクセント色、<br> で改行。",
+  "template": "cinematic-serif",
   "footage": "footage.mp4",
   "colors": {
     "ivory": "#f4ede0",

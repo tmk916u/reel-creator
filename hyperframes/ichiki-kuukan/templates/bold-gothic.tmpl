@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ja" data-resolution="portrait">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reel — bold-gothic</title>
+    <!-- テンプレート。値は brief.json で編集（template: "bold-gothic"）し `npm run build`。 -->
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --ivory: {{ivory}};
+        --accent: {{accent}};
+        --rule: {{rule}};
+        --romaji: {{romaji_color}};
+        --bg: {{bg}};
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      @font-face {
+        font-family: "Zen Kaku Gothic New"; font-style: normal; font-weight: 400; font-display: block;
+        src: url("fonts/zen-kaku-latin-400.woff2") format("woff2");
+        unicode-range: U+0000-00FF,U+2000-20CF,U+2100-214F;
+      }
+      @font-face {
+        font-family: "Zen Kaku Gothic New"; font-style: normal; font-weight: 400; font-display: block;
+        src: url("fonts/zen-kaku-jp-400.woff2") format("woff2");
+        unicode-range: U+3000-30FF,U+3400-4DBF,U+4E00-9FFF,U+FF00-FFEF,U+31F0-31FF;
+      }
+      @font-face {
+        font-family: "Zen Kaku Gothic New"; font-style: normal; font-weight: 700; font-display: block;
+        src: url("fonts/zen-kaku-latin-700.woff2") format("woff2");
+        unicode-range: U+0000-00FF,U+2000-20CF,U+2100-214F;
+      }
+      @font-face {
+        font-family: "Zen Kaku Gothic New"; font-style: normal; font-weight: 700; font-display: block;
+        src: url("fonts/zen-kaku-jp-700.woff2") format("woff2");
+        unicode-range: U+3000-30FF,U+3400-4DBF,U+4E00-9FFF,U+FF00-FFEF,U+31F0-31FF;
+      }
+
+      body, html { width: 1080px; height: 1920px; overflow: hidden; background: var(--bg); }
+      #main-composition { position: relative; width: 1080px; height: 1920px; overflow: hidden; }
+      #kenburns { position: absolute; inset: 0; width: 100%; height: 100%; transform-origin: 50% 40%; }
+      #a-roll { width: 1080px; height: 1920px; object-fit: cover; display: block; }
+
+      .scrim-top { position: absolute; top: 0; left: 0; width: 100%; height: 30%;
+        background: linear-gradient(to bottom, rgba(8,8,10,0.55), rgba(8,8,10,0)); pointer-events: none; }
+      .scrim-bottom { position: absolute; bottom: 0; left: 0; width: 100%; height: 58%;
+        background: linear-gradient(to top, rgba(8,8,10,0.88), rgba(8,8,10,0.05)); pointer-events: none; }
+
+      .gothic { font-family: "Zen Kaku Gothic New", sans-serif; }
+
+      /* intro wordmark — center, accent bar */
+      .intro { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+      .intro .bar { width: 64px; height: 8px; background: var(--accent); margin-bottom: 36px; }
+      .wordmark { font-size: 150px; font-weight:700; letter-spacing: 0.02em; color: var(--ivory); line-height:1.0; }
+      .romaji { margin-top: 26px; font-size: 30px; font-weight:700; letter-spacing: 0.5em; color: var(--romaji); padding-left:0.5em; }
+
+      /* phrase — bottom-left, big, accent vertical bar */
+      .phrase-wrap { position:absolute; left: 76px; right: 76px; bottom: 360px; }
+      .phrase-wrap .vbar { width: 12px; height: 100%; background: var(--accent); position:absolute; left:-2px; top:0; }
+      .phrase { padding-left: 44px; font-size: 100px; font-weight:700; line-height: 1.34; letter-spacing: 0.01em;
+        color: var(--ivory); text-shadow: 0 6px 30px rgba(0,0,0,0.5); }
+      .phrase em { font-style: normal; color: var(--accent); }
+
+      /* outro — bottom-left, handle big */
+      .outro { position:absolute; left: 76px; bottom: 220px; }
+      .outro .obar { width: 90px; height: 8px; background: var(--accent); margin-bottom: 22px; }
+      .kicker { font-size: 28px; font-weight:700; letter-spacing: 0.4em; color: var(--rule); padding-left:0.4em; margin-bottom: 16px; }
+      .handle { font-size: 64px; font-weight:700; letter-spacing: 0.04em; color: var(--ivory); }
+    </style>
+  </head>
+  <body>
+    <div id="main-composition" data-composition-id="main-video" data-width="1080" data-height="1920" data-start="0" data-duration="12">
+      <div id="kenburns">
+        <video id="a-roll" src="{{footage}}" muted playsinline data-start="0" data-duration="12" data-track-index="0"></video>
+      </div>
+
+      <div id="overlays" class="clip" data-start="0" data-duration="12" data-track-index="1" style="position:absolute; inset:0;">
+        <div class="scrim-top"></div>
+        <div class="scrim-bottom"></div>
+
+        <!-- Scene 1: intro -->
+        <div class="intro" id="s1">
+          <div class="bar" id="s1bar"></div>
+          <div class="wordmark gothic">{{wordmark}}</div>
+          <div class="romaji gothic">{{romaji}}</div>
+        </div>
+
+        <!-- Scene 2: phrase 1 -->
+        <div class="phrase-wrap" id="s2">
+          <div class="vbar" id="s2bar"></div>
+          <div class="phrase gothic">{{phrase1}}</div>
+        </div>
+
+        <!-- Scene 3: phrase 2 -->
+        <div class="phrase-wrap" id="s3">
+          <div class="vbar" id="s3bar"></div>
+          <div class="phrase gothic">{{phrase2}}</div>
+        </div>
+
+        <!-- Scene 4: outro -->
+        <div class="outro" id="s4">
+          <div class="obar" id="s4bar"></div>
+          <div class="kicker gothic">{{kicker}}</div>
+          <div class="handle gothic">{{handle}}</div>
+        </div>
+      </div>
+
+      <script>
+        window.__timelines = window.__timelines || {};
+        const tl = gsap.timeline({ paused: true });
+
+        gsap.set("#kenburns", { scale: 1.1 });
+        tl.to("#kenburns", { scale: 1.0, duration: 12, ease: "none" }, 0);
+
+        // initial
+        gsap.set("#s1bar", { scaleX: 0, transformOrigin: "50% 50%" });
+        gsap.set(["#s1 .wordmark", "#s1 .romaji"], { opacity: 0, y: 40 });
+        gsap.set(["#s2 .phrase", "#s3 .phrase"], { opacity: 0, y: 50 });
+        gsap.set(["#s2bar", "#s3bar"], { scaleY: 0, transformOrigin: "50% 0%" });
+        gsap.set(["#s4 .kicker", "#s4 .handle"], { opacity: 0, x: -40 });
+        gsap.set("#s4bar", { scaleX: 0, transformOrigin: "0% 50%" });
+
+        // Scene 1 (0.0 - 3.1) — snappy
+        tl.to("#s1bar", { scaleX: 1, duration: 0.5, ease: "power3.out" }, 0.2);
+        tl.to("#s1 .wordmark", { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 0.4);
+        tl.to("#s1 .romaji", { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 0.7);
+        tl.to(["#s1bar", "#s1 .wordmark", "#s1 .romaji"], { opacity: 0, duration: 0.45, ease: "power1.in" }, 2.9);
+
+        // Scene 2 (3.2 - 6.5)
+        tl.to("#s2bar", { scaleY: 1, duration: 0.5, ease: "power3.out" }, 3.25);
+        tl.to("#s2 .phrase", { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 3.4);
+        tl.to(["#s2 .phrase", "#s2bar"], { opacity: 0, duration: 0.45, ease: "power1.in" }, 6.2);
+
+        // Scene 3 (6.6 - 9.6)
+        tl.to("#s3bar", { scaleY: 1, duration: 0.5, ease: "power3.out" }, 6.65);
+        tl.to("#s3 .phrase", { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 6.8);
+        tl.to(["#s3 .phrase", "#s3bar"], { opacity: 0, duration: 0.45, ease: "power1.in" }, 9.2);
+
+        // Scene 4 outro (9.7 - 12)
+        tl.to("#s4bar", { scaleX: 1, duration: 0.55, ease: "power3.out" }, 9.7);
+        tl.to("#s4 .kicker", { opacity: 1, x: 0, duration: 0.6, ease: "power3.out" }, 9.9);
+        tl.to("#s4 .handle", { opacity: 1, x: 0, duration: 0.7, ease: "power3.out" }, 10.1);
+
+        window.__timelines["main-video"] = tl;
+      </script>
+    </div>
+  </body>
+</html>
