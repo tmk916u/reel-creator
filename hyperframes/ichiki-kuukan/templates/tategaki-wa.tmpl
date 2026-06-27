@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ja" data-resolution="portrait">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reel — tategaki-wa</title>
+    <!-- テンプレート。値は brief.json で編集（template: "tategaki-wa"）し `npm run build`。 -->
+    <!-- 縦書き和風: Shippori Mincho を vertical-rl で。phrase の <br> は右→左の列になり読み順は正しい。 -->
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --ivory: {{ivory}};
+        --accent: {{accent}};
+        --rule: {{rule}};
+        --romaji: {{romaji_color}};
+        --bg: {{bg}};
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      @font-face {
+        font-family: "Shippori Mincho"; font-style: normal; font-weight: 700; font-display: block;
+        src: url("fonts/shippori-mincho-latin-700.woff2") format("woff2");
+        unicode-range: U+0000-00FF,U+2000-20CF,U+2100-214F;
+      }
+      @font-face {
+        font-family: "Shippori Mincho"; font-style: normal; font-weight: 700; font-display: block;
+        src: url("fonts/shippori-mincho-jp-700.woff2") format("woff2");
+        unicode-range: U+3000-30FF,U+3400-4DBF,U+4E00-9FFF,U+FF00-FFEF,U+31F0-31FF;
+      }
+      @font-face {
+        font-family: "Zen Kaku Gothic New"; font-style: normal; font-weight: 400; font-display: block;
+        src: url("fonts/zen-kaku-latin-400.woff2") format("woff2");
+        unicode-range: U+0000-00FF,U+2000-20CF,U+2100-214F;
+      }
+      @font-face {
+        font-family: "Zen Kaku Gothic New"; font-style: normal; font-weight: 400; font-display: block;
+        src: url("fonts/zen-kaku-jp-400.woff2") format("woff2");
+        unicode-range: U+3000-30FF,U+3400-4DBF,U+4E00-9FFF,U+FF00-FFEF,U+31F0-31FF;
+      }
+
+      body, html { width: 1080px; height: 1920px; overflow: hidden; background: var(--bg); }
+      #main-composition { position: relative; width: 1080px; height: 1920px; overflow: hidden; }
+      #kenburns { position: absolute; inset: 0; width: 100%; height: 100%; transform-origin: 40% 42%; }
+      #a-roll { width: 1080px; height: 1920px; object-fit: cover; display: block; }
+
+      /* 右側に縦の文字を置くので、右側を少し落とす */
+      .scrim-right { position:absolute; inset:0; pointer-events:none;
+        background: linear-gradient(to left, rgba(8,8,10,0.72) 0%, rgba(8,8,10,0.30) 32%, rgba(8,8,10,0) 60%); }
+      .scrim-top { position:absolute; top:0; left:0; width:100%; height:26%; pointer-events:none;
+        background: linear-gradient(to bottom, rgba(8,8,10,0.5), rgba(8,8,10,0)); }
+      .vignette { position:absolute; inset:0; pointer-events:none; box-shadow: inset 0 0 300px 50px rgba(0,0,0,0.45); }
+
+      .serif { font-family: "Shippori Mincho", serif; }
+      .gothic { font-family: "Zen Kaku Gothic New", sans-serif; }
+
+      /* 縦書き共通 */
+      .v { writing-mode: vertical-rl; text-orientation: mixed; }
+
+      /* wordmark: 右上、縦、細い縦罫を伴う */
+      .wm-wrap { position:absolute; top: 150px; right: 96px; display:flex; align-items:flex-start; gap: 28px; }
+      .wm-rule { width: 1.5px; background: var(--rule); height: 0; opacity:0.85; }
+      .wordmark { font-size: 128px; font-weight:700; letter-spacing: 0.12em; color: var(--ivory);
+        text-shadow: 0 4px 30px rgba(0,0,0,0.5); }
+      .romaji { position:absolute; top: 156px; left: 110px; font-size: 24px; font-weight:400;
+        letter-spacing: 0.5em; color: var(--romaji); writing-mode: horizontal-tb; }
+
+      /* phrase: 右寄り、縦、複数列(<br>) */
+      .phrase-wrap { position:absolute; top: 320px; right: 110px; height: 1200px; }
+      .phrase { font-size: 86px; font-weight:700; line-height: 1.9; letter-spacing: 0.1em; color: var(--ivory);
+        text-shadow: 0 4px 26px rgba(0,0,0,0.55); }
+      .phrase em { font-style: normal; color: var(--accent); }
+
+      /* outro: 下、ハンドルは横で小さく */
+      .outro { position:absolute; left: 96px; bottom: 150px; }
+      .kicker { font-size: 25px; font-weight:400; letter-spacing: 0.42em; color: var(--rule);
+        padding-left:0.42em; margin-bottom: 16px; }
+      .handle { font-size: 50px; font-weight:700; letter-spacing: 0.1em; color: var(--ivory); }
+      .orule { width: 84px; height: 1.5px; background: var(--rule); margin-top: 20px; opacity:0.85; }
+    </style>
+  </head>
+  <body>
+    <div id="main-composition" data-composition-id="main-video" data-width="1080" data-height="1920" data-start="0" data-duration="12">
+      <div id="kenburns">
+        <video id="a-roll" src="{{footage}}" muted playsinline data-start="0" data-duration="12" data-track-index="0"></video>
+      </div>
+
+      <div id="overlays" class="clip" data-start="0" data-duration="12" data-track-index="1" style="position:absolute; inset:0;">
+        <div class="scrim-top"></div>
+        <div class="scrim-right"></div>
+        <div class="vignette"></div>
+
+        <!-- Scene 1: wordmark (縦) -->
+        <div id="s1">
+          <div class="wm-wrap">
+            <div class="wm-rule" id="s1rule"></div>
+            <div class="wordmark serif v">{{wordmark}}</div>
+          </div>
+          <div class="romaji gothic">{{romaji}}</div>
+        </div>
+
+        <!-- Scene 2: phrase 1 (縦) -->
+        <div class="phrase-wrap" id="s2">
+          <div class="phrase serif v">{{phrase1}}</div>
+        </div>
+
+        <!-- Scene 3: phrase 2 (縦) -->
+        <div class="phrase-wrap" id="s3">
+          <div class="phrase serif v">{{phrase2}}</div>
+        </div>
+
+        <!-- Scene 4: outro -->
+        <div class="outro" id="s4">
+          <div class="kicker gothic">{{kicker}}</div>
+          <div class="handle gothic">{{handle}}</div>
+          <div class="orule" id="s4rule"></div>
+        </div>
+      </div>
+
+      <script>
+        window.__timelines = window.__timelines || {};
+        const tl = gsap.timeline({ paused: true });
+
+        gsap.set("#kenburns", { scale: 1.08 });
+        tl.to("#kenburns", { scale: 1.0, duration: 12, ease: "none" }, 0);
+
+        gsap.set("#s1rule", { height: 0 });
+        gsap.set(["#s1 .wordmark", "#s1 .romaji"], { opacity: 0, y: -24 });
+        gsap.set(["#s2 .phrase", "#s3 .phrase"], { opacity: 0, x: 28 });
+        gsap.set(["#s4 .kicker", "#s4 .handle"], { opacity: 0, y: 18 });
+        gsap.set("#s4rule", { scaleX: 0, transformOrigin: "0% 50%" });
+
+        // Scene 1 (0.0 - 3.2) — 縦罫が伸び、文字が降りてくる
+        tl.to("#s1rule", { height: 150, duration: 0.9, ease: "power2.inOut" }, 0.3);
+        tl.to("#s1 .wordmark", { opacity: 1, y: 0, duration: 1.1, ease: "power2.out" }, 0.4);
+        tl.to("#s1 .romaji", { opacity: 1, y: 0, duration: 0.9, ease: "power2.out" }, 0.8);
+        tl.to(["#s1 .wordmark", "#s1 .romaji", "#s1rule"], { opacity: 0, duration: 0.55, ease: "power1.in" }, 3.0);
+
+        // Scene 2 (3.4 - 6.5)
+        tl.to("#s2 .phrase", { opacity: 1, x: 0, duration: 1.0, ease: "power2.out" }, 3.4);
+        tl.to("#s2 .phrase", { opacity: 0, duration: 0.55, ease: "power1.in" }, 6.2);
+
+        // Scene 3 (6.6 - 9.5)
+        tl.to("#s3 .phrase", { opacity: 1, x: 0, duration: 1.0, ease: "power2.out" }, 6.7);
+        tl.to("#s3 .phrase", { opacity: 0, duration: 0.55, ease: "power1.in" }, 9.2);
+
+        // Scene 4 outro (9.6 - 12)
+        tl.to("#s4 .kicker", { opacity: 1, y: 0, duration: 0.8, ease: "power2.out" }, 9.7);
+        tl.to("#s4 .handle", { opacity: 1, y: 0, duration: 0.9, ease: "power2.out" }, 9.9);
+        tl.to("#s4rule", { scaleX: 1, duration: 0.8, ease: "power2.inOut" }, 10.2);
+
+        window.__timelines["main-video"] = tl;
+      </script>
+    </div>
+  </body>
+</html>

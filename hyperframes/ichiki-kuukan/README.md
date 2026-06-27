@@ -6,7 +6,7 @@ reel-creator の前処理（色味・9:16・尺抜き）済み映像に、HyperF
 ## 編集のしかた（コピー・配色）
 
 1. **`brief.json` を編集**する（これだけでOK）
-   - `template` … **テイスト選択**。`cinematic-serif`（明朝・静か・暗）/ `bold-gothic`（ゴシック・力強い・暗）/ `minimal-light`（明朝・クリーム帯・明るいエディトリアル）
+   - `template` … **テイスト選択**。`cinematic-serif`（明朝・静か・暗）/ `bold-gothic`（ゴシック・力強い・暗）/ `minimal-light`（明朝・クリーム帯・明るい）/ `tategaki-wa`（縦書き・明朝・和）
    - `copy.wordmark` / `phrase1` / `phrase2` / `kicker` / `handle` … 文言
      - `phrase` は `<em>…</em>` でアクセント色、`<br />` で改行
    - `colors.*` … 配色（ivory=本文 / accent=強調 / rule=罫線 / bg=背景）
