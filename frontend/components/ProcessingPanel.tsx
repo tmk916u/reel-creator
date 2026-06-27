@@ -149,6 +149,23 @@ export default function ProcessingPanel({
     }
   };
 
+  // ワンクリック自動作成: 解析 → 推奨設定適用 → そのまま処理開始（字幕プレビュー省略）。
+  // state 更新の遅延を避けるため、マージ済み設定を直接 onStart へ渡す。
+  const handleAutoCreate = async () => {
+    setAnalyzing(true);
+    setAnalyzeError("");
+    try {
+      const r = await analyzeVideo(jobId);
+      setAnalysis(r);
+      onStart({ ...settings, ...r.settings, skip_preview: true });
+    } catch (e) {
+      setAnalyzeError(
+        e instanceof Error ? e.message : "自動作成に失敗しました",
+      );
+      setAnalyzing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* プレビュー */}
@@ -166,23 +183,30 @@ export default function ProcessingPanel({
 
         {/* ✨ おまかせ（自動判定） */}
         <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-amber-200">
-                ✨ おまかせ（自動判定）
-              </div>
-              <div className="text-xs text-gray-400 mt-0.5">
-                動画の中身を解析して最適な設定を自動でセット
-              </div>
+          <div>
+            <div className="text-sm font-semibold text-amber-200">
+              ✨ おまかせ（自動判定）
             </div>
-            <button
-              onClick={handleAuto}
-              disabled={analyzing || !jobId}
-              className="shrink-0 px-4 py-2 rounded-lg text-sm font-medium bg-amber-500 text-white hover:bg-amber-400 disabled:opacity-50 transition-colors"
-            >
-              {analyzing ? "解析中..." : "おまかせ設定"}
-            </button>
+            <div className="text-xs text-gray-400 mt-0.5">
+              動画の中身を解析して、最適な設定で自動仕上げ
+            </div>
           </div>
+          <button
+            onClick={handleAutoCreate}
+            disabled={analyzing || !jobId}
+            className="mt-3 w-full px-4 py-2.5 rounded-lg text-sm font-bold bg-amber-500 text-white hover:bg-amber-400 disabled:opacity-50 transition-colors"
+          >
+            {analyzing
+              ? "解析中..."
+              : "✨ おまかせで自動作成（解析→処理まで一気に）"}
+          </button>
+          <button
+            onClick={handleAuto}
+            disabled={analyzing || !jobId}
+            className="mt-2 w-full text-xs text-amber-200/80 hover:text-amber-100 underline disabled:opacity-50"
+          >
+            設定だけ反映して自分で調整する
+          </button>
           {analysis && (
             <div className="mt-2 text-xs text-amber-100 bg-black/20 rounded p-2">
               <span className="font-semibold">判定: {analysis.label}</span>
