@@ -76,6 +76,30 @@ class ScheduledPost(Base):
     video: Mapped["Video"] = relationship(back_populates="posts")
 
 
+class AccountProfile(Base):
+    """アカウント文脈プロファイル（account-context-profile）。
+
+    アカウントの性質（ジャンル/ターゲット/トーン/目的）を 1 件保持し、
+    AI キャプション生成のシステムプロンプトに注入する。MVP は単一プロファイル
+    （is_active=True を get-or-create）で運用する。
+    """
+    __tablename__ = "account_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    niche: Mapped[str | None] = mapped_column(Text)            # ジャンル/専門領域
+    target_audience: Mapped[str | None] = mapped_column(Text)  # ターゲット視聴者
+    tone: Mapped[str | None] = mapped_column(Text)             # トーン/語り口
+    goals: Mapped[str | None] = mapped_column(Text)            # 運用目的（集客/権威性 等）
+    hashtags: Mapped[str | None] = mapped_column(Text)         # 定番ハッシュタグ
+    ng_words: Mapped[str | None] = mapped_column(Text)         # 避ける語/表現
+    notes: Mapped[str | None] = mapped_column(Text)            # 自由メモ/例文
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
 class SocialConnection(Base):
     __tablename__ = "social_connections"
 

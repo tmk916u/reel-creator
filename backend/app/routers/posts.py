@@ -25,6 +25,7 @@ from app.models.schemas import (
     UploadVideoResponse,
 )
 from app.services import publisher, storage
+from app.services.account_profile import build_caption_system_prompt, get_or_create_active, profile_to_dict
 from app.services.captions_ai import LLMError, TranscribeError, suggest_captions
 from app.services.hashtags import normalize_hashtags
 
@@ -247,8 +248,13 @@ def suggest_captions_endpoint(
     """書き起こし + LLM で投稿用テキスト一式を生成する（add-ai-caption-suggest）。"""
     if db.get(Video, video_id) is None:
         raise HTTPException(404, "動画が見つかりません")
+    # アカウント文脈プロファイルをシステムプロンプトに注入する
+    profile = get_or_create_active(db)
+    system_prompt = build_caption_system_prompt(profile_to_dict(profile))
     try:
-        result = suggest_captions(str(video_id), theme=payload.theme)
+        result = suggest_captions(
+            str(video_id), theme=payload.theme, system_prompt=system_prompt
+        )
     except TranscribeError as e:
         raise HTTPException(422, f"書き起こしに失敗しました: {e}")
     except LLMError as e:

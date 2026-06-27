@@ -110,7 +110,7 @@ def _transcribe_video(video_id: str) -> str:
 
 # ----- LLM -----
 
-def _call_anthropic(user_text: str) -> str:
+def _call_anthropic(user_text: str, system_prompt: str | None = None) -> str:
     """Anthropic Claude (Haiku 4.5) に JSON 生成を依頼。raw text を返す。"""
     if not os.getenv("ANTHROPIC_API_KEY"):
         raise LLMError("ANTHROPIC_API_KEY が設定されていません")
@@ -120,7 +120,7 @@ def _call_anthropic(user_text: str) -> str:
         resp = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=2048,
-            system=_SYSTEM_PROMPT,
+            system=system_prompt or _SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_text}],
         )
         text = ""
@@ -156,8 +156,14 @@ def _extract_json(raw: str) -> dict[str, Any]:
 
 # ----- 公開関数 -----
 
-def suggest_captions(video_id: str, theme: str | None = None) -> CaptionsResult:
-    """指定 video_id の動画から AI キャプション一式を生成する。"""
+def suggest_captions(
+    video_id: str, theme: str | None = None, system_prompt: str | None = None
+) -> CaptionsResult:
+    """指定 video_id の動画から AI キャプション一式を生成する。
+
+    system_prompt を渡すとアカウント文脈プロファイルを反映した生成になる。
+    省略時は従来のデフォルト（整体院 / ヘルスケア領域）。
+    """
     transcript = _transcribe_video(video_id)
 
     user_parts = []
@@ -166,7 +172,7 @@ def suggest_captions(video_id: str, theme: str | None = None) -> CaptionsResult:
     user_parts.append(f"[書き起こし]\n{transcript}")
     user_text = "\n".join(user_parts)
 
-    raw = _call_anthropic(user_text)
+    raw = _call_anthropic(user_text, system_prompt=system_prompt)
     payload = _extract_json(raw)
 
     try:

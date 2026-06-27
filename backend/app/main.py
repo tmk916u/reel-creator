@@ -15,7 +15,7 @@ logging.basicConfig(
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import video, publish, posts, connections, cron
+from app.routers import video, publish, posts, connections, cron, profile
 from app.db import init_db, SessionLocal
 from app.services.publisher import run_due_posts
 
@@ -97,6 +97,7 @@ app.include_router(publish.router)
 app.include_router(posts.router)
 app.include_router(connections.router)
 app.include_router(cron.router)
+app.include_router(profile.router)
 
 
 @app.get("/api/health")

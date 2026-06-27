@@ -85,7 +85,7 @@ class TestSuggestCaptions:
         monkeypatch.setattr(captions_ai, "_transcribe_video", lambda vid: "これは整体院の動画です")
         monkeypatch.setattr(
             captions_ai, "_call_anthropic",
-            lambda text: '{"instagram_caption":"IG","youtube_title":"YT","youtube_description":"説明","hashtags":["#a","#b","#c","#d","#e"],"cover_text_candidates":["案1","案2","案3"]}',
+            lambda text, system_prompt=None: '{"instagram_caption":"IG","youtube_title":"YT","youtube_description":"説明","hashtags":["#a","#b","#c","#d","#e"],"cover_text_candidates":["案1","案2","案3"]}',
         )
         result = suggest_captions("vid-123", theme="ダイエット")
         assert result.instagram_caption == "IG"
@@ -102,7 +102,7 @@ class TestSuggestCaptions:
 
     def test_llm_failure_propagates(self, monkeypatch):
         monkeypatch.setattr(captions_ai, "_transcribe_video", lambda vid: "transcript text")
-        def raise_(text):
+        def raise_(text, system_prompt=None):
             raise LLMError("API down")
         monkeypatch.setattr(captions_ai, "_call_anthropic", raise_)
         with pytest.raises(LLMError):
@@ -110,7 +110,7 @@ class TestSuggestCaptions:
 
     def test_llm_invalid_json_propagates(self, monkeypatch):
         monkeypatch.setattr(captions_ai, "_transcribe_video", lambda vid: "transcript")
-        monkeypatch.setattr(captions_ai, "_call_anthropic", lambda text: "not json")
+        monkeypatch.setattr(captions_ai, "_call_anthropic", lambda text, system_prompt=None: "not json")
         with pytest.raises(LLMError):
             suggest_captions("vid", theme=None)
 
@@ -119,7 +119,7 @@ class TestSuggestCaptions:
         monkeypatch.setattr(captions_ai, "_transcribe_video", lambda vid: "transcript")
         monkeypatch.setattr(
             captions_ai, "_call_anthropic",
-            lambda text: '{"hashtags": []}',  # 必須フィールド欠落
+            lambda text, system_prompt=None: '{"hashtags": []}',  # 必須フィールド欠落
         )
         with pytest.raises(LLMError):
             suggest_captions("vid", theme=None)

@@ -313,3 +313,23 @@ class CaptionSuggestionResponse(BaseModel):
     youtube_description: str
     hashtags: list[str] = []
     cover_text_candidates: list[str] = []
+
+
+# --- アカウント文脈プロファイル (account-context-profile) ---
+
+class AccountProfileIn(BaseModel):
+    """プロファイル更新リクエスト。全フィールド任意。"""
+    niche: str | None = None
+    target_audience: str | None = None
+    tone: str | None = None
+    goals: str | None = None
+    hashtags: str | None = None
+    ng_words: str | None = None
+    notes: str | None = None
+
+
+class AccountProfileOut(AccountProfileIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    updated_at: datetime

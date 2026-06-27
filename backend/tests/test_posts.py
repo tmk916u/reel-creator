@@ -244,7 +244,7 @@ def test_suggest_success(ctx, monkeypatch):
 
     vid = _make_video(ctx)
 
-    def fake_suggest(video_id, theme=None):
+    def fake_suggest(video_id, theme=None, system_prompt=None):
         return CaptionsResult(
             instagram_caption="生成された IG",
             youtube_title="生成されたタイトル",
@@ -268,7 +268,7 @@ def test_suggest_transcribe_error_returns_422(ctx, monkeypatch):
     from app.services.captions_ai import TranscribeError
 
     vid = _make_video(ctx)
-    def raise_(video_id, theme=None):
+    def raise_(video_id, theme=None, system_prompt=None):
         raise TranscribeError("音声抽出失敗")
     monkeypatch.setattr(posts_mod, "suggest_captions", raise_)
 
@@ -282,7 +282,7 @@ def test_suggest_llm_error_returns_502(ctx, monkeypatch):
     from app.services.captions_ai import LLMError
 
     vid = _make_video(ctx)
-    def raise_(video_id, theme=None):
+    def raise_(video_id, theme=None, system_prompt=None):
         raise LLMError("API rate limit")
     monkeypatch.setattr(posts_mod, "suggest_captions", raise_)
 
@@ -298,7 +298,7 @@ def test_suggest_without_theme(ctx, monkeypatch):
 
     vid = _make_video(ctx)
     captured = {}
-    def fake_suggest(video_id, theme=None):
+    def fake_suggest(video_id, theme=None, system_prompt=None):
         captured["theme"] = theme
         return CaptionsResult(
             instagram_caption="x", youtube_title="y", youtube_description="z",
