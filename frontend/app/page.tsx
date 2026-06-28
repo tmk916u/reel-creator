@@ -34,12 +34,23 @@ export default function Home() {
 
         <Link
           href="/post/profile"
-          className="group rounded-2xl border border-gray-800 bg-gray-900 p-8 transition hover:border-purple-500/60 hover:bg-gray-800 sm:col-span-2"
+          className="group rounded-2xl border border-gray-800 bg-gray-900 p-8 transition hover:border-purple-500/60 hover:bg-gray-800"
         >
           <div className="mb-3 text-4xl">🎯</div>
           <div className="mb-1 text-xl font-semibold">アカウント設定</div>
           <p className="text-sm text-gray-400">
             アカウントの性質・ターゲットを登録し AI 生成を最適化
+          </p>
+        </Link>
+
+        <Link
+          href="/reel-finish"
+          className="group rounded-2xl border border-gray-800 bg-gray-900 p-8 transition hover:border-emerald-500/60 hover:bg-gray-800"
+        >
+          <div className="mb-3 text-4xl">🎞️</div>
+          <div className="mb-1 text-xl font-semibold">リール仕上げ</div>
+          <p className="text-sm text-gray-400">
+            ブランドタイポを乗せて雑誌・CM 級のリールに（HyperFrames）
           </p>
         </Link>
       </div>
