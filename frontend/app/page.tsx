@@ -54,6 +54,13 @@ export default function Home() {
           </p>
         </Link>
       </div>
+
+      <Link
+        href="/guide"
+        className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-gray-800 bg-gray-900/60 py-3 text-sm text-gray-300 transition hover:border-emerald-500/50 hover:text-white"
+      >
+        ❓ はじめての方へ — サービス全体の使い方ガイド
+      </Link>
     </main>
   );
 }
